@@ -58,9 +58,29 @@ START → tutor ──(tool calls?)──► tools ──► tutor → END
   - `save_preference(key, value)` — writes to the long-term profile.
 - **Corrections UX:** the tutor mentions a correction briefly and naturally in its reply; full details (original, corrected, explanation) are shown in a side panel fed by `mistakes`.
 
-### End of lesson
+### End of lesson (summarization)
 
-A `summarize` step produces a structured summary (Pydantic): practiced skills, recurring mistakes, vocabulary, recommendations for the next lesson. It is saved to long-term memory.
+Done by the same model (Claude Haiku 5.5); cost ≈ $0.003 per lesson.
+
+**Triggers**
+- The user clicks "End lesson".
+- Fallback: lessons left unfinished (tab closed) are summarized automatically the next time the app starts, so no lesson is lost from long-term memory.
+
+**Input**
+- The full lesson transcript (checkpointer state).
+- `mistakes` and `vocabulary` already recorded by the tutor's tools — the summarizer does not have to re-extract them.
+
+**Output 1 — lesson summary** (Pydantic `LessonSummary`):
+`topic`, `date`, `summary` (2–3 sentences), `practiced`, `recurring_mistakes`, `vocabulary`, `next_steps`.
+
+**Output 2 — progress profile update.** A short cumulative text describing the learner (strengths, persistent problems, estimated level). After each lesson Haiku *updates* the previous version with the new summary instead of rewriting it from scratch.
+
+**What the tutor sees at lesson start** (prompt size stays constant regardless of lesson count):
+- profile (name, level, preferences),
+- progress profile,
+- the 3 most recent lesson summaries.
+
+**Implementation note:** Haiku 5.5 uses adaptive thinking by default, and Anthropic rejects forced tool use together with thinking. LangChain's default `with_structured_output` relies on forced tool use, so use the native structured output mode (`with_structured_output(..., method="json_schema")`) and cover it with a test.
 
 ## Memory
 
@@ -68,7 +88,8 @@ A `summarize` step produces a structured summary (Pydantic): practiced skills, r
 |---|---|---|
 | Short-term | checkpointer (SQLite) | `thread_id = lesson_id` |
 | Long-term: profile | Store (SQLite) | namespace `("users", user_id)`, key `"profile"` |
-| Long-term: lessons | Store (SQLite) | namespace `("users", user_id, "lessons")`, key `lesson_id` |
+| Long-term: progress profile | Store (SQLite) | namespace `("users", user_id)`, key `"progress"` |
+| Long-term: lessons | Store (SQLite) | namespace `("users", user_id, "lessons")`, key `lesson_id` (includes `status`: `active` / `summarized`) |
 
 One SQLite file for both. Moving to Postgres = swapping to `PostgresSaver` / `PostgresStore`.
 
