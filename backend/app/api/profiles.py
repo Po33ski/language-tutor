@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import StoreDep
 from app.storage import memory
-from app.storage.memory import Profile, ProfileCreate
+from app.storage.memory import Profile, ProfileCreate, Progress
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -23,3 +23,9 @@ async def get_profile(user_id: str, store: StoreDep) -> Profile:
     if profile is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
     return profile
+
+
+@router.get("/{user_id}/progress")
+async def get_progress(user_id: str, store: StoreDep) -> Progress | None:
+    """The learner's progress profile; null until the first lesson is summarized."""
+    return await memory.get_progress(store, user_id)

@@ -56,6 +56,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/profiles/{user_id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Progress
+         * @description The learner's progress profile; null until the first lesson is summarized.
+         */
+        get: operations["get_progress_api_profiles__user_id__progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lessons": {
         parameters: {
             query?: never;
@@ -85,6 +105,26 @@ export interface paths {
         get: operations["get_lesson_api_lessons__lesson_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/lessons/{lesson_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Lesson Endpoint
+         * @description End the lesson and save its summary to long-term memory. Safe to call twice.
+         */
+        post: operations["end_lesson_endpoint_api_lessons__lesson_id__end_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -158,6 +198,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Ended At */
+            ended_at?: string | null;
             summary?: components["schemas"]["LessonSummary"] | null;
         };
         /** LessonCreate */
@@ -181,7 +223,7 @@ export interface components {
          * LessonStatus
          * @enum {string}
          */
-        LessonStatus: "active" | "summarized";
+        LessonStatus: "active" | "summarized" | "discarded";
         /**
          * LessonSummary
          * @description Structured summary of one finished lesson.
@@ -262,6 +304,19 @@ export interface components {
             preferences?: {
                 [key: string]: string;
             };
+        };
+        /**
+         * Progress
+         * @description Cumulative description of the learner, updated after every summarized lesson.
+         */
+        Progress: {
+            /** Text */
+            text: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** SendMessageRequest */
         SendMessageRequest: {
@@ -403,6 +458,37 @@ export interface operations {
             };
         };
     };
+    get_progress_api_profiles__user_id__progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Progress"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_lessons_api_lessons_get: {
         parameters: {
             query: {
@@ -485,6 +571,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LessonDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    end_lesson_endpoint_api_lessons__lesson_id__end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lesson_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Lesson"];
                 };
             };
             /** @description Validation Error */

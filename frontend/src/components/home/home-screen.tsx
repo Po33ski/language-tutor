@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import { BackendStatus } from "@/components/backend-status";
 import { buttonPrimary, buttonSecondary, card, errorText, input } from "@/components/ui";
-import { api, type Lesson, type Profile } from "@/lib/api/client";
+import { api, type Lesson, type Profile, type Progress } from "@/lib/api/client";
 import { setCurrentUserId, useCurrentUserId } from "@/lib/current-user";
 
 export function HomeScreen() {
@@ -83,12 +83,19 @@ function ProfileHome({ profile }: { profile: Profile }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [progress, setProgress] = useState<Progress | null>(null);
 
   useEffect(() => {
+    // Independent requests: run them in parallel.
     api
       .listLessons(profile.id)
-      .then(setLessons)
+      // Discarded lessons were never really started, so they are not worth listing.
+      .then((all) => setLessons(all.filter((lesson) => lesson.status !== "discarded")))
       .catch(() => setLessons([]));
+    api
+      .getProgress(profile.id)
+      .then(setProgress)
+      .catch(() => setProgress(null));
   }, [profile.id]);
 
   async function startLesson(event: React.FormEvent<HTMLFormElement>) {
@@ -112,6 +119,17 @@ function ProfileHome({ profile }: { profile: Profile }) {
           Switch profile
         </button>
       </div>
+
+      {progress ? (
+        <section className={`${card} flex flex-col gap-2`}>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+            Your progress
+          </h3>
+          <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+            {progress.text}
+          </p>
+        </section>
+      ) : null}
 
       <form onSubmit={startLesson} className={`${card} flex flex-col gap-3`}>
         <label htmlFor="topic" className="font-medium">
@@ -144,8 +162,9 @@ function ProfileHome({ profile }: { profile: Profile }) {
                   href={`/lesson/${lesson.id}`}
                   className={`${card} flex items-center justify-between gap-4 hover:border-zinc-400 dark:hover:border-zinc-600`}
                 >
-                  <span>{lesson.topic}</span>
-                  <span className="shrink-0 text-xs text-zinc-500">
+                  <span className="min-w-0 truncate">{lesson.topic}</span>
+                  <span className="flex shrink-0 items-center gap-3 text-xs text-zinc-500">
+                    <LessonStatusBadge status={lesson.status} />
                     {new Date(lesson.created_at).toLocaleDateString()}
                   </span>
                 </Link>
@@ -155,5 +174,17 @@ function ProfileHome({ profile }: { profile: Profile }) {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function LessonStatusBadge({ status }: { status: Lesson["status"] }) {
+  return status === "summarized" ? (
+    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+      Completed
+    </span>
+  ) : (
+    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+      In progress
+    </span>
   );
 }

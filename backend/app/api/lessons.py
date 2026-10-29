@@ -1,16 +1,22 @@
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
-from typing import Literal
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from app.agent.prompts import KICKOFF_MESSAGE
 from app.agent.state import Mistake, VocabularyItem
-from app.api.deps import LessonLocksDep, SettingsDep, StoreDep, TutorDep
+from app.agent.transcript import (
+    KICKOFF_ID_PREFIX,
+    ChatMessage,
+    thread_config,
+    to_chat_messages,
+)
+from app.agent.wrapup import end_lesson
+from app.api.deps import LessonLocksDep, SettingsDep, StoreDep, SummarizerDep, TutorDep
 from app.config import Settings
 from app.storage import memory
 from app.storage.memory import Lesson
@@ -19,18 +25,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lessons", tags=["lessons"])
 
-KICKOFF_ID_PREFIX = "kickoff-"
-
 
 class LessonCreate(BaseModel):
     user_id: str
     # Defaults to the profile's main topic.
     topic: str | None = Field(default=None, max_length=200)
-
-
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
 
 
 class LessonDetail(BaseModel):
@@ -43,29 +42,6 @@ class LessonDetail(BaseModel):
 class SendMessageRequest(BaseModel):
     # None starts the lesson: the tutor greets the learner and asks the first question.
     content: str | None = Field(default=None, max_length=4000)
-
-
-def _thread_config(lesson_id: str) -> dict:
-    return {"configurable": {"thread_id": lesson_id}}
-
-
-def _to_chat_messages(messages: Sequence[AnyMessage]) -> list[ChatMessage]:
-    """Visible conversation only: no kickoff signal, tool calls or tool results.
-
-    Consecutive assistant texts (e.g. before and after a tool call) are merged into one
-    message, matching how they were streamed.
-    """
-    result: list[ChatMessage] = []
-    for message in messages:
-        if isinstance(message, HumanMessage):
-            if not (message.id or "").startswith(KICKOFF_ID_PREFIX):
-                result.append(ChatMessage(role="user", content=message.text))
-        elif isinstance(message, AIMessage) and message.text.strip():
-            if result and result[-1].role == "assistant":
-                result[-1].content += message.text
-            else:
-                result.append(ChatMessage(role="assistant", content=message.text))
-    return result
 
 
 def _sse(event: str, data: dict) -> str:
@@ -96,11 +72,11 @@ async def list_lessons(user_id: str, store: StoreDep) -> list[Lesson]:
 @router.get("/{lesson_id}")
 async def get_lesson(lesson_id: str, store: StoreDep, tutor: TutorDep) -> LessonDetail:
     lesson = await _require_lesson(store, lesson_id)
-    snapshot = await tutor.aget_state(_thread_config(lesson_id))
+    snapshot = await tutor.aget_state(thread_config(lesson_id))
     values = snapshot.values
     return LessonDetail(
         lesson=lesson,
-        messages=_to_chat_messages(values.get("messages", [])),
+        messages=to_chat_messages(values.get("messages", [])),
         mistakes=values.get("mistakes", []),
         vocabulary=values.get("vocabulary", []),
     )
@@ -109,11 +85,12 @@ async def get_lesson(lesson_id: str, store: StoreDep, tutor: TutorDep) -> Lesson
 async def _initial_state(store: StoreDep, settings: Settings, lesson: Lesson) -> dict:
     """Learner context copied from long-term memory into the lesson at its start."""
     profile = await memory.get_profile(store, lesson.user_id)
+    progress = await memory.get_progress(store, lesson.user_id)
     return {
         "user_id": lesson.user_id,
         "profile": profile.model_dump(mode="json") if profile else {},
         "topic": lesson.topic,
-        "progress": await memory.get_progress(store, lesson.user_id),
+        "progress": progress.text if progress else "",
         "previous_summaries": await memory.recent_summaries(
             store, lesson.user_id, settings.recent_summaries_count
         ),
@@ -121,6 +98,31 @@ async def _initial_state(store: StoreDep, settings: Settings, lesson: Lesson) ->
         "vocabulary": [],
         "messages": [HumanMessage(KICKOFF_MESSAGE, id=f"{KICKOFF_ID_PREFIX}{lesson.id}")],
     }
+
+
+@router.post("/{lesson_id}/end")
+async def end_lesson_endpoint(
+    lesson_id: str,
+    store: StoreDep,
+    tutor: TutorDep,
+    summarizer: SummarizerDep,
+    locks: LessonLocksDep,
+) -> Lesson:
+    """End the lesson and save its summary to long-term memory. Safe to call twice."""
+    lesson = await _require_lesson(store, lesson_id)
+    lock = locks[lesson_id]
+    if lock.locked():
+        raise HTTPException(status.HTTP_409_CONFLICT, "The tutor is still answering")
+    async with lock:
+        # Re-read under the lock: a concurrent request may have ended it already.
+        lesson = await _require_lesson(store, lesson_id)
+        try:
+            return await end_lesson(store, tutor, summarizer, lesson)
+        except Exception as error:
+            logger.exception("Summarizing lesson %s failed", lesson_id)
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "Could not summarize the lesson. Try again."
+            ) from error
 
 
 @router.post(
@@ -151,7 +153,7 @@ async def send_message(
     is_kickoff = body.content is None
     if not is_kickoff and not body.content.strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Message is empty")
-    config = _thread_config(lesson_id)
+    config = thread_config(lesson_id)
 
     async def stream() -> AsyncIterator[str]:
         async with lock:

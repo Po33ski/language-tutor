@@ -9,6 +9,8 @@ export type ChatMessage = Schemas["ChatMessage"];
 export type Mistake = Schemas["Mistake"];
 export type VocabularyItem = Schemas["VocabularyItem"];
 export type EnglishLevel = Schemas["EnglishLevel"];
+export type LessonSummary = Schemas["LessonSummary"];
+export type Progress = Schemas["Progress"];
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -42,7 +44,10 @@ export const api = {
     request<Profile>("/profiles", { method: "POST", body: JSON.stringify(data) }),
   listLessons: (userId: string) =>
     request<Lesson[]>(`/lessons?user_id=${encodeURIComponent(userId)}`),
+  getProgress: (userId: string) => request<Progress | null>(`/profiles/${userId}/progress`),
   getLesson: (lessonId: string) => request<LessonDetail>(`/lessons/${lessonId}`),
+  endLesson: (lessonId: string) =>
+    request<Lesson>(`/lessons/${lessonId}/end`, { method: "POST" }),
   createLesson: (userId: string, topic?: string) =>
     request<Lesson>("/lessons", {
       method: "POST",

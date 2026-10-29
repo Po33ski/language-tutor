@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage
 
 from app.config import Settings
 from app.main import create_app
+from app.storage.memory import LessonSummary
 
 
 class FakeTutorModel(GenericFakeChatModel):
@@ -17,6 +18,31 @@ class FakeTutorModel(GenericFakeChatModel):
 
     def bind_tools(self, tools, **kwargs):
         return self
+
+
+class FakeSummarizer:
+    """Records what it was asked to summarize and returns a fixed summary."""
+
+    def __init__(self) -> None:
+        self.summarize_calls: list[dict] = []
+        self.progress_calls: list[dict] = []
+        self.fail = False
+
+    async def summarize(self, **kwargs) -> LessonSummary:
+        if self.fail:
+            raise RuntimeError("model unavailable")
+        self.summarize_calls.append(kwargs)
+        return LessonSummary(
+            summary="You introduced yourself.",
+            practiced=["self-introduction"],
+            recurring_mistakes=["present simple"],
+            vocabulary=["background"],
+            next_steps=["talk about projects"],
+        )
+
+    async def update_progress(self, **kwargs) -> str:
+        self.progress_calls.append(kwargs)
+        return f"Progress after {len(self.progress_calls)} lesson(s)."
 
 
 def mistake_call(original: str, corrected: str, explanation: str) -> AIMessage:
@@ -35,14 +61,19 @@ def parse_sse(body: str) -> list[tuple[str, dict]]:
 
 
 @pytest.fixture
-def make_client(tmp_path) -> Iterator:
+def summarizer() -> FakeSummarizer:
+    return FakeSummarizer()
+
+
+@pytest.fixture
+def make_client(tmp_path, summarizer) -> Iterator:
     """Factory: a test client whose tutor replays the given AI messages."""
     clients = []
 
     def factory(responses: list[AIMessage]) -> TestClient:
         settings = Settings(data_dir=tmp_path, anthropic_api_key="test")
         model = FakeTutorModel(messages=iter(responses))
-        client = TestClient(create_app(settings, model))
+        client = TestClient(create_app(settings, model, summarizer))
         client.__enter__()  # run the lifespan (opens SQLite, builds the agent)
         clients.append(client)
         return client

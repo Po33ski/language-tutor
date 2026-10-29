@@ -8,7 +8,7 @@ interface FeedbackPanelProps {
 
 export function FeedbackPanel({ mistakes, vocabulary }: FeedbackPanelProps) {
   return (
-    <aside className="flex flex-col gap-6 overflow-y-auto">
+    <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
           Corrections ({mistakes.length})
@@ -51,6 +51,6 @@ export function FeedbackPanel({ mistakes, vocabulary }: FeedbackPanelProps) {
           </ul>
         )}
       </section>
-    </aside>
+    </div>
   );
 }

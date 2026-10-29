@@ -13,9 +13,13 @@ class Settings(BaseSettings):
     llm_model: str = "anthropic:claude-haiku-5-5"
     # Reasoning effort for the tutor's replies; "low" keeps chat fast and cheap.
     tutor_effort: str = "low"
+    # Summaries run once per lesson, so they can afford a bit more reasoning.
+    summary_effort: str = "medium"
     data_dir: Path = Path("data")
     # How many recent lesson summaries the tutor sees at lesson start.
     recent_summaries_count: int = 3
+    # Active lessons idle for longer than this are summarized automatically at startup.
+    stale_lesson_hours: float = 6
     cors_origins: list[str] = ["http://localhost:3000"]
 
     @property

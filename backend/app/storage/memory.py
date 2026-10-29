@@ -46,6 +46,8 @@ class Profile(ProfileCreate):
 class LessonStatus(StrEnum):
     ACTIVE = "active"
     SUMMARIZED = "summarized"
+    # Ended before the learner said anything, so there was nothing to summarize.
+    DISCARDED = "discarded"
 
 
 class LessonSummary(BaseModel):
@@ -64,7 +66,15 @@ class Lesson(BaseModel):
     topic: str
     status: LessonStatus = LessonStatus.ACTIVE
     created_at: datetime
+    ended_at: datetime | None = None
     summary: LessonSummary | None = None
+
+
+class Progress(BaseModel):
+    """Cumulative description of the learner, updated after every summarized lesson."""
+
+    text: str
+    updated_at: datetime
 
 
 # --- Profiles -----------------------------------------------------------------
@@ -104,6 +114,10 @@ async def create_lesson(store: BaseStore, user_id: str, topic: str) -> Lesson:
     return lesson
 
 
+async def save_lesson(store: BaseStore, lesson: Lesson) -> None:
+    await store.aput(LESSONS_NS, lesson.id, lesson.model_dump(mode="json"))
+
+
 async def get_lesson(store: BaseStore, lesson_id: str) -> Lesson | None:
     item = await store.aget(LESSONS_NS, lesson_id)
     return Lesson.model_validate(item.value) if item else None
@@ -114,6 +128,14 @@ async def list_lessons(store: BaseStore, user_id: str) -> list[Lesson]:
     items = await store.asearch(LESSONS_NS, filter={"user_id": user_id}, limit=SEARCH_LIMIT)
     lessons = [Lesson.model_validate(item.value) for item in items]
     return sorted(lessons, key=lambda lesson: lesson.created_at, reverse=True)
+
+
+async def list_active_lessons(store: BaseStore) -> list[Lesson]:
+    """Active lessons of all users."""
+    items = await store.asearch(
+        LESSONS_NS, filter={"status": LessonStatus.ACTIVE.value}, limit=SEARCH_LIMIT
+    )
+    return [Lesson.model_validate(item.value) for item in items]
 
 
 async def recent_summaries(store: BaseStore, user_id: str, count: int) -> list[dict]:
@@ -129,6 +151,12 @@ async def recent_summaries(store: BaseStore, user_id: str, count: int) -> list[d
 # --- Progress profile -----------------------------------------------------------
 
 
-async def get_progress(store: BaseStore, user_id: str) -> str:
+async def get_progress(store: BaseStore, user_id: str) -> Progress | None:
     item = await store.aget(_progress_ns(user_id), "progress")
-    return item.value["text"] if item else ""
+    return Progress.model_validate(item.value) if item else None
+
+
+async def set_progress(store: BaseStore, user_id: str, text: str) -> Progress:
+    progress = Progress(text=text, updated_at=_now())
+    await store.aput(_progress_ns(user_id), "progress", progress.model_dump(mode="json"))
+    return progress

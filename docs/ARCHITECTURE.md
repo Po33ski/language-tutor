@@ -60,11 +60,13 @@ START → tutor ──(tool calls?)──► tools ──► tutor → END
 
 ### End of lesson (summarization)
 
-Done by the same model (Claude Haiku 5.5); cost ≈ $0.003 per lesson.
+Done by the same model (Claude Haiku 5.5, effort `medium`) in `app/agent/summarizer.py`, orchestrated by `app/agent/wrapup.py`; ≈ 10 s and ≈ $0.003 per lesson.
 
 **Triggers**
-- The user clicks "End lesson".
-- Fallback: lessons left unfinished (tab closed) are summarized automatically the next time the app starts, so no lesson is lost from long-term memory.
+- The user clicks "End lesson" → `POST /api/lessons/{id}/end` (idempotent; returns the updated lesson).
+- Fallback: at startup a background task ends every active lesson idle for more than `STALE_LESSON_HOURS` (default 6; last activity = the lesson's latest checkpoint). The threshold keeps `uvicorn --reload` restarts from closing lessons that are in progress.
+- A lesson where the learner never wrote anything gets status `discarded` and no summary (no LLM call).
+- If the summary call fails, the lesson stays `active` (502) so it can be retried. A failed progress update is logged and does not undo the saved summary.
 
 **Input**
 - The full lesson transcript (checkpointer state).
@@ -88,7 +90,7 @@ Done by the same model (Claude Haiku 5.5); cost ≈ $0.003 per lesson.
 |---|---|---|
 | Short-term | checkpointer (`data/checkpoints.db`) | `thread_id = lesson_id` |
 | Long-term: profiles | Store (`data/memory.db`) | namespace `("profiles",)`, key `user_id` |
-| Long-term: lessons | Store | namespace `("lessons",)`, key `lesson_id`; value has `user_id`, `topic`, `status` (`active` / `summarized`), `summary` |
+| Long-term: lessons | Store | namespace `("lessons",)`, key `lesson_id`; value has `user_id`, `topic`, `status` (`active` / `summarized` / `discarded`), `ended_at`, `summary` |
 | Long-term: progress profile | Store | namespace `("users", user_id)`, key `"progress"` |
 
 Checkpointer and store use separate SQLite files so their writes never contend for the same lock. Moving to Postgres = swapping to `PostgresSaver` / `PostgresStore`.
@@ -101,6 +103,8 @@ Checkpointer and store use separate SQLite files so their writes never contend f
 | `GET /api/lessons?user_id=` | list a user's lessons, newest first |
 | `GET /api/lessons/{id}` | visible chat history + mistakes + vocabulary |
 | `POST /api/lessons/{id}/messages` | run one tutor turn, streamed as SSE: `token`, `mistake`, `vocabulary`, `error`, `done` |
+| `POST /api/lessons/{id}/end` | end the lesson: summary + progress profile update |
+| `GET /api/profiles/{id}/progress` | the learner's progress profile (null before the first summary) |
 
 - `content: null` starts the lesson: learner context is copied from long-term memory into the lesson state together with a hidden `[START_LESSON]` message, and the tutor speaks first.
 - One turn at a time per lesson (per-lesson lock; a second request gets 409).
