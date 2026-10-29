@@ -51,3 +51,4 @@ An English-learning app. An AI agent (LangGraph) runs a conversational lesson wi
 | Backend checks | `cd backend && uv run ruff check . && uv run ruff format --check . && uv run pytest` |
 | Frontend dev server | `cd frontend && npm run dev` |
 | Frontend checks | `cd frontend && npm run lint && npx tsc --noEmit` |
+| Regenerate API types (backend running) | `cd frontend && npm run gen:api` |

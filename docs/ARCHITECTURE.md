@@ -86,12 +86,25 @@ Done by the same model (Claude Haiku 5.5); cost ≈ $0.003 per lesson.
 
 | Type | Storage | Key |
 |---|---|---|
-| Short-term | checkpointer (SQLite) | `thread_id = lesson_id` |
-| Long-term: profile | Store (SQLite) | namespace `("users", user_id)`, key `"profile"` |
-| Long-term: progress profile | Store (SQLite) | namespace `("users", user_id)`, key `"progress"` |
-| Long-term: lessons | Store (SQLite) | namespace `("users", user_id, "lessons")`, key `lesson_id` (includes `status`: `active` / `summarized`) |
+| Short-term | checkpointer (`data/checkpoints.db`) | `thread_id = lesson_id` |
+| Long-term: profiles | Store (`data/memory.db`) | namespace `("profiles",)`, key `user_id` |
+| Long-term: lessons | Store | namespace `("lessons",)`, key `lesson_id`; value has `user_id`, `topic`, `status` (`active` / `summarized`), `summary` |
+| Long-term: progress profile | Store | namespace `("users", user_id)`, key `"progress"` |
 
-One SQLite file for both. Moving to Postgres = swapping to `PostgresSaver` / `PostgresStore`.
+Checkpointer and store use separate SQLite files so their writes never contend for the same lock. Moving to Postgres = swapping to `PostgresSaver` / `PostgresStore`.
+
+## Lesson API
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/lessons` | create a lesson (topic defaults to the profile's main topic) |
+| `GET /api/lessons?user_id=` | list a user's lessons, newest first |
+| `GET /api/lessons/{id}` | visible chat history + mistakes + vocabulary |
+| `POST /api/lessons/{id}/messages` | run one tutor turn, streamed as SSE: `token`, `mistake`, `vocabulary`, `error`, `done` |
+
+- `content: null` starts the lesson: learner context is copied from long-term memory into the lesson state together with a hidden `[START_LESSON]` message, and the tutor speaks first.
+- One turn at a time per lesson (per-lesson lock; a second request gets 409).
+- The system prompt is built from lesson state, so it stays byte-identical for the whole lesson (required by Haiku's thinking-block binding, and good for prompt caching). The model runs with `prefix_mismatch_behavior: "drop_block"` so a lesson survives code changes to the prompt or tools.
 
 ## Voice flow (MVP)
 

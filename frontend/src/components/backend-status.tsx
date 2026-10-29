@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { getHealth } from "@/lib/api/client";
+import { api } from "@/lib/api/client";
 
 type Status = "checking" | "online" | "offline";
 
@@ -23,7 +23,7 @@ export function BackendStatus() {
 
   useEffect(() => {
     const controller = new AbortController();
-    getHealth(controller.signal)
+    api.getHealth(controller.signal)
       .then(() => setStatus("online"))
       .catch(() => {
         if (!controller.signal.aborted) setStatus("offline");
