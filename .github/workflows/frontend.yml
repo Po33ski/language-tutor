@@ -28,6 +28,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
+      # Generates the global route types (PageProps, LayoutProps) that tsc needs; locally
+      # `next dev` or `next build` has already created them in .next/.
+      - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run build
 
