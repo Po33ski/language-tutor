@@ -40,5 +40,5 @@ export function createStoredValue(key: string) {
     return useSyncExternalStore(subscribe, read, () => null);
   }
 
-  return { useValue, write };
+  return { useValue, read, write };
 }

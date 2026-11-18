@@ -1,3 +1,5 @@
+import { readAccessKey, setAccessKey } from "@/lib/access-key";
+
 import type { components } from "./schema";
 
 type Schemas = components["schemas"];
@@ -23,8 +25,37 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+function bearer(key: string | null): Record<string, string> {
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+/** `fetch` against the backend, with the access key attached. */
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`${API_URL}/api${path}`, {
+    ...init,
+    headers: { ...bearer(readAccessKey()), ...init?.headers },
+  });
+  // Forget a rejected key, so the access gate asks for a new one.
+  if (response.status === 401) setAccessKey(null);
+  return response;
+}
+
+/**
+ * Whether the backend accepts this access key (or needs none). Rejects on network
+ * errors. Does not forget a rejected key, so the gate can say it was wrong.
+ */
+export async function checkAccess(
+  key: string | null,
+  signal?: AbortSignal,
+): Promise<"granted" | "denied"> {
+  const response = await fetch(`${API_URL}/api/auth/check`, { headers: bearer(key), signal });
+  if (response.status === 401) return "denied";
+  if (!response.ok) throw new ApiError(response.status, response.statusText);
+  return "granted";
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetch(path, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
@@ -59,7 +90,7 @@ export const api = {
     const form = new FormData();
     form.append("audio", audio, "answer");
     // No JSON Content-Type here: the browser sets the multipart boundary itself.
-    const response = await fetch(`${API_URL}/api/speech/transcribe`, {
+    const response = await apiFetch("/speech/transcribe", {
       method: "POST",
       body: form,
     });
@@ -70,7 +101,7 @@ export const api = {
 
   /** Text to speech (Kokoro); resolves with a WAV file. */
   synthesizeSpeech: async (text: string): Promise<Blob> => {
-    const response = await fetch(`${API_URL}/api/speech/synthesize`, {
+    const response = await apiFetch("/speech/synthesize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
@@ -95,7 +126,7 @@ export async function streamTutorTurn(
   content: string | null,
   handlers: TutorTurnHandlers,
 ): Promise<void> {
-  const response = await fetch(`${API_URL}/api/lessons/${lessonId}/messages`, {
+  const response = await apiFetch(`/lessons/${lessonId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),

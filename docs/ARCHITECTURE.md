@@ -1,6 +1,6 @@
 # Architecture
 
-Local-only English tutor: Next.js frontend, FastAPI backend, LangGraph agent on Claude Haiku 5.5, local speech models (Whisper for STT, Kokoro for TTS).
+English tutor: Next.js frontend, FastAPI backend, LangGraph agent on Claude Haiku 5.5, self-hosted speech models (Whisper for STT, Kokoro for TTS). Developed locally (speech on the GPU); deployed to Vercel + an Oracle Cloud ARM VM (speech on the CPU), see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Overview
 
@@ -25,7 +25,9 @@ Local-only English tutor: Next.js frontend, FastAPI backend, LangGraph agent on 
 ## Users
 
 - Multiple local profiles, no login. The user picks or creates a profile on start; the selected `user_id` is kept in browser storage.
-- Auth can be added later without changing the data model (everything is already keyed by `user_id`).
+- Access control is one shared secret, not user accounts: with `ACCESS_KEY` set, every endpoint except `GET /api/health` needs `Authorization: Bearer <key>` (`app/api/security.py`). The frontend's `AccessGate` calls `GET /api/auth/check`; on 401 it asks for the key, stores it in localStorage and sends it with every request. Any later 401 clears the key, so the gate asks again. Without a key (local dev) the API is open and the gate lets everything through.
+- The LLM and speech endpoints (`/messages`, `/end`, `/speech/*`) are rate-limited per client IP in memory (`RATE_LIMIT_PER_MINUTE`, default 30); fine because the backend is a single process.
+- Real user accounts can be added later without changing the data model (everything is already keyed by `user_id`).
 
 ## Onboarding questionnaire
 
@@ -39,8 +41,10 @@ Local-only English tutor: Next.js frontend, FastAPI backend, LangGraph agent on 
 | Field | Description |
 |---|---|
 | `messages` | conversation history (`add_messages` reducer) |
+| `user_id` | owner of the lesson (used by `save_preference`) |
 | `profile` | snapshot of name, level, preferences, loaded at lesson start |
 | `topic` | lesson topic |
+| `progress` | progress profile text, loaded at lesson start |
 | `previous_summaries` | last N lesson summaries, loaded at lesson start |
 | `mistakes` | append-only list of recorded mistakes |
 | `vocabulary` | append-only list of new vocabulary |
@@ -127,15 +131,29 @@ Checkpointer and store use separate SQLite files so their writes never contend f
 - `SPEECH_ENABLED=false` turns speech off (the endpoints return 503).
 - Later: sentence-by-sentence TTS while the reply streams, to cut the wait before the voice starts.
 
+## Deployment
+
+```
+Vercel (Next.js) ──HTTPS + Bearer key──► Oracle VM: Caddy :443 ──► backend container :8000
+                                                                    ├─ volume tutor-data (SQLite)
+                                                                    └─ volume tutor-models (HF cache)
+```
+
+- The backend image is CPU-only (`uv sync --extra cpu`, ≈ 0.6 s TTS / ≈ 1 s STT per turn on a desktop CPU with Whisper `small`) and is built on the ARM server itself, so no registry is needed.
+- GitHub Actions: path-filtered `backend.yml` / `frontend.yml` run the checks on every push and PR, then deploy `main` (SSH + `deploy/deploy.sh`; `vercel build` + `vercel deploy --prebuilt`).
+- Full setup: [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Repo layout
 
 ```
-backend/   app/{api, agent, speech, storage, config.py, main.py}, tests/   (uv, ruff, pytest)
+backend/   app/{api, agent, speech, storage, config.py, main.py}, tests/, Dockerfile   (uv, ruff, pytest)
 frontend/  src/{app/{onboarding, lesson/[id]}, components, hooks, lib/api}  (Next.js 16, Tailwind 4)
-docs/      ARCHITECTURE.md
+deploy/    compose.yaml, Caddyfile, deploy.sh, backup.sh, .env.example     (server side)
+.github/   workflows/{backend,frontend}.yml                                 (CI/CD)
+docs/      ARCHITECTURE.md, DEPLOYMENT.md
 ```
 
-- Frontend calls `localhost:8000` directly with CORS enabled (no Next.js proxy, which can buffer SSE).
+- Frontend calls the backend (`NEXT_PUBLIC_API_URL`) directly with CORS enabled (no Next.js proxy, which can buffer SSE).
 - TypeScript API types are generated from the FastAPI OpenAPI schema (`openapi-typescript`).
 
 ## Environment notes

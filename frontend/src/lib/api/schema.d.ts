@@ -21,6 +21,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check Access
+         * @description Succeed (204) when the request may use the API: the access key is valid, or none
+         *     is configured. Mounted with the access key dependency, which returns 401 otherwise.
+         */
+        get: operations["check_access_api_auth_check_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profiles": {
         parameters: {
             query?: never;
@@ -426,6 +447,24 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
+            };
+        };
+    };
+    check_access_api_auth_check_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

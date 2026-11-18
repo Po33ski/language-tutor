@@ -1,0 +1,45 @@
+# Production stack on the server: the backend behind Caddy (automatic HTTPS).
+# Run from this directory: docker compose up -d --build
+name: language-tutor
+
+services:
+  backend:
+    build: ../backend
+    image: language-tutor-backend
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - tutor-data:/data # SQLite: lesson checkpoints + long-term memory
+      - tutor-models:/models # Whisper + Kokoro, downloaded on the first start
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # TLS certificates
+      - caddy-config:/config
+
+volumes:
+  tutor-data:
+  tutor-models:
+  caddy-data:
+  caddy-config:

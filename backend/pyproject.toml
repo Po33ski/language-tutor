@@ -14,12 +14,19 @@ dependencies = [
     "langchain-anthropic>=1.7.7",
     "langgraph>=1.2.18",
     "langgraph-checkpoint-sqlite>=3.1.2",
-    "nvidia-cublas-cu12>=12.9.3.13",
     "pydantic-settings>=2.16.2",
     "python-multipart>=0.0.34",
     "soundfile>=0.14.0",
     "uvicorn[standard]>=0.54.0",
 ]
+
+[project.optional-dependencies]
+# Pick one. torch is required by kokoro either way; the extra only chooses its build.
+# GPU (local development): PyPI torch with CUDA, plus CUDA 12 cuBLAS for Whisper
+# (see app/speech/cuda.py).
+gpu = ["torch>=2.15.0", "nvidia-cublas-cu12>=12.9.3.13"]
+# CPU only (the server and CI): skips several GB of CUDA libraries.
+cpu = ["torch>=2.15.0"]
 
 [dependency-groups]
 dev = [
@@ -38,5 +45,14 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.uv]
+conflicts = [[{ extra = "gpu" }, { extra = "cpu" }]]
+
 [tool.uv.sources]
+torch = [{ index = "pytorch-cpu", extra = "cpu" }]
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

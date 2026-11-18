@@ -2,7 +2,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ from app.agent.transcript import (
 )
 from app.agent.wrapup import end_lesson
 from app.api.deps import LessonLocksDep, SettingsDep, StoreDep, SummarizerDep, TutorDep
+from app.api.security import rate_limit
 from app.config import Settings
 from app.storage import memory
 from app.storage.memory import Lesson
@@ -100,7 +101,7 @@ async def _initial_state(store: StoreDep, settings: Settings, lesson: Lesson) ->
     }
 
 
-@router.post("/{lesson_id}/end")
+@router.post("/{lesson_id}/end", dependencies=[Depends(rate_limit)])
 async def end_lesson_endpoint(
     lesson_id: str,
     store: StoreDep,
@@ -127,6 +128,7 @@ async def end_lesson_endpoint(
 
 @router.post(
     "/{lesson_id}/messages",
+    dependencies=[Depends(rate_limit)],
     response_class=StreamingResponse,
     responses={200: {"content": {"text/event-stream": {}}}},
 )
