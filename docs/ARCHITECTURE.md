@@ -56,6 +56,8 @@ START → tutor ──(tool calls?)──► tools ──► tutor → END
   - `record_mistake(original, corrected, explanation)` — appends to `mistakes`.
   - `add_vocabulary(word, meaning, example)` — appends to `vocabulary`.
   - `save_preference(key, value)` — writes to the long-term profile.
+- **Middleware:** `tutor_prompt` builds the system prompt from lesson state; `end_turn_if_already_replied` skips the model call after tool results when the tutor already wrote its reply together with the tool calls (otherwise Haiku sometimes repeats the reply, or ends with an empty one).
+- **Correction quality:** rules in the prompt (one natural version, smallest change, check prepositions/articles/collocations, ask instead of guessing) were checked on 15 typical learner sentences, 7 of them not mentioned in the prompt and 1 already correct.
 - **Corrections UX:** the tutor mentions a correction briefly and naturally in its reply; full details (original, corrected, explanation) are shown in a side panel fed by `mistakes`.
 
 ### End of lesson (summarization)

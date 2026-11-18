@@ -1,8 +1,12 @@
-from langchain.agents import create_agent
-from langchain.agents.middleware import ModelRequest, dynamic_prompt
+from typing import Any
+
+from langchain.agents import AgentState, create_agent
+from langchain.agents.middleware import ModelRequest, before_model, dynamic_prompt
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
 
 from app.agent.prompts import build_system_prompt
@@ -14,6 +18,22 @@ from app.config import Settings
 @dynamic_prompt
 def tutor_prompt(request: ModelRequest) -> str:
     return build_system_prompt(request.state)
+
+
+@before_model(can_jump_to=["end"])
+def end_turn_if_already_replied(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+    """Skip the model call after tool results if the tutor already replied.
+
+    The model sometimes writes its reply in the same message as its tool calls and then
+    repeats it after the tool results, so the learner would see the reply twice.
+    """
+    messages = state["messages"]
+    if not messages or not isinstance(messages[-1], ToolMessage):
+        return None
+    last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+    if last_ai is not None and last_ai.text.strip():
+        return {"jump_to": "end"}
+    return None
 
 
 def build_model(settings: Settings) -> BaseChatModel:
@@ -35,7 +55,7 @@ def build_tutor_agent(model: BaseChatModel, checkpointer: BaseCheckpointSaver, s
     return create_agent(
         model,
         tools=TUTOR_TOOLS,
-        middleware=[tutor_prompt],
+        middleware=[tutor_prompt, end_turn_if_already_replied],
         state_schema=TutorState,
         checkpointer=checkpointer,
         store=store,

@@ -90,3 +90,22 @@ def test_empty_message_and_unknown_lesson(make_client, profile_payload) -> None:
     assert empty.status_code == 422
     unknown = client.post("/api/lessons/missing/messages", json={"content": "Hi"})
     assert unknown.status_code == 404
+
+
+def test_reply_written_with_tool_calls_is_not_repeated(make_client, profile_payload) -> None:
+    reply_with_tools = mistake_call("I am work", "I work", "Use the present simple.")
+    reply_with_tools.content = "Small fix: we say 'I work'. What do you do?"
+    client = make_client(
+        [
+            AIMessage("Hi Anna!"),
+            reply_with_tools,
+            # Must only be used for the next turn, not as a repeated reply.
+            AIMessage("Next turn reply."),
+        ]
+    )
+    lesson_id = _start_lesson(client, profile_payload)
+    _send(client, lesson_id, None)
+
+    turn = _send(client, lesson_id, "I am work as developer")
+    assert _text(turn) == "Small fix: we say 'I work'. What do you do?"
+    assert _text(_send(client, lesson_id, "I build APIs")) == "Next turn reply."

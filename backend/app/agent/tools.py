@@ -10,16 +10,19 @@ from app.storage import memory
 def record_mistake(
     original: str, corrected: str, explanation: str, runtime: ToolRuntime
 ) -> Command:
-    """Record a meaningful mistake the learner just made.
+    """Record one mistake the learner just made.
 
-    Record each mistake once; do not record overlapping fragments of the same sentence
-    as separate mistakes unless they are different errors.
+    Call once per distinct error. Do not record overlapping fragments of the same error
+    twice.
 
     Args:
         original: The shortest fragment of the learner's exact wording that contains
             the mistake.
-        corrected: The corrected, natural wording.
-        explanation: One short sentence explaining the rule or why it is better.
+        corrected: The same fragment the way a native speaker would naturally say it in
+            this context: one version only (never "A / B"), keeping the learner's meaning
+            and as many of their words as possible.
+        explanation: One short, simple sentence explaining the rule or why it sounds
+            more natural.
     """
     mistake = Mistake(original=original, corrected=corrected, explanation=explanation)
     return Command(
