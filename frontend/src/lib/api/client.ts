@@ -53,6 +53,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ user_id: userId, topic: topic || null }),
     }),
+
+  /** Speech to text (Whisper). */
+  transcribe: async (audio: Blob): Promise<string> => {
+    const form = new FormData();
+    form.append("audio", audio, "answer");
+    // No JSON Content-Type here: the browser sets the multipart boundary itself.
+    const response = await fetch(`${API_URL}/api/speech/transcribe`, {
+      method: "POST",
+      body: form,
+    });
+    if (!response.ok) throw new ApiError(response.status, "Could not transcribe the recording.");
+    const body: Schemas["TranscriptionResponse"] = await response.json();
+    return body.text;
+  },
+
+  /** Text to speech (Kokoro); resolves with a WAV file. */
+  synthesizeSpeech: async (text: string): Promise<Blob> => {
+    const response = await fetch(`${API_URL}/api/speech/synthesize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw new ApiError(response.status, "Could not generate speech.");
+    return response.blob();
+  },
 };
 
 export interface TutorTurnHandlers {

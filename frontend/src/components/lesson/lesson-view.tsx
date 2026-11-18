@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { FeedbackPanel } from "@/components/lesson/feedback-panel";
 import { LessonSummaryCard } from "@/components/lesson/lesson-summary-card";
 import { MessageComposer } from "@/components/lesson/message-composer";
 import { MessageList } from "@/components/lesson/message-list";
 import { buttonSecondary, card, errorText } from "@/components/ui";
+import { useSpeaker } from "@/hooks/use-speaker";
 import {
   api,
   ApiError,
@@ -17,6 +18,7 @@ import {
   type Mistake,
   type VocabularyItem,
 } from "@/lib/api/client";
+import { setVoiceEnabled, useVoiceEnabled } from "@/lib/voice-settings";
 
 // Lessons whose opening turn was already requested in this page session. Module-level so
 // React's development double-mount does not start the lesson twice.
@@ -31,12 +33,22 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
+  const voiceEnabled = useVoiceEnabled();
+  const { speak, stop: stopSpeaking, speakingText } = useSpeaker();
+
+  // Read through a ref so toggling the voice does not recreate `runTurn` (which would
+  // re-run the lesson loading effect).
+  const voiceEnabledRef = useRef(voiceEnabled);
+  useEffect(() => {
+    voiceEnabledRef.current = voiceEnabled;
+  }, [voiceEnabled]);
 
   const runTurn = useCallback(
     async (content: string | null) => {
       setError(null);
       setDraft("");
       let reply = "";
+      let completed = false;
       try {
         await streamTutorTurn(lessonId, content, {
           onToken: (text) => {
@@ -46,14 +58,16 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
           onMistake: (mistake) => setMistakes((previous) => [...previous, mistake]),
           onVocabulary: (item) => setVocabulary((previous) => [...previous, item]),
         });
+        completed = true;
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : "The tutor could not answer.");
       } finally {
         if (reply) setMessages((previous) => [...previous, { role: "assistant", content: reply }]);
         setDraft(null);
+        if (completed && reply && voiceEnabledRef.current) void speak(reply);
       }
     },
-    [lessonId],
+    [lessonId, speak],
   );
 
   useEffect(() => {
@@ -98,6 +112,11 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
     }
   }
 
+  function toggleVoice() {
+    if (voiceEnabled) stopSpeaking();
+    setVoiceEnabled(!voiceEnabled);
+  }
+
   const isActive = lesson?.status === "active";
 
   return (
@@ -109,26 +128,47 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
           </Link>
           <h1 className="truncate text-xl font-semibold">{lesson?.topic ?? "Lesson"}</h1>
         </div>
-        {isActive ? (
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             className={buttonSecondary}
-            onClick={endLesson}
-            disabled={draft !== null || ending}
+            onClick={toggleVoice}
+            aria-pressed={voiceEnabled}
+            title="Read the tutor's replies aloud"
           >
-            {ending ? "Summarizing…" : "End lesson"}
+            {voiceEnabled ? "Voice on" : "Voice off"}
           </button>
-        ) : null}
+          {isActive ? (
+            <button
+              type="button"
+              className={buttonSecondary}
+              onClick={endLesson}
+              disabled={draft !== null || ending}
+            >
+              {ending ? "Summarizing…" : "End lesson"}
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[1fr_320px]">
         <section className="flex min-h-0 flex-col" aria-busy={draft !== null}>
-          <MessageList messages={messages} draft={draft} />
+          <MessageList
+            messages={messages}
+            draft={draft}
+            speakingText={speakingText}
+            onPlay={speak}
+            onStop={stopSpeaking}
+          />
           {error ? <p className={`${errorText} pb-2`}>{error}</p> : null}
           {lesson && !isActive ? (
             <LessonEndedNote discarded={lesson.status === "discarded"} />
           ) : (
-            <MessageComposer disabled={draft !== null || ending || !lesson} onSend={send} />
+            <MessageComposer
+              disabled={draft !== null || ending || !lesson}
+              onSend={send}
+              onRecordingStart={stopSpeaking}
+            />
           )}
         </section>
         <aside className="flex min-h-0 flex-col gap-6 overflow-y-auto">

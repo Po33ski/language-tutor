@@ -154,10 +154,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/speech/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe
+         * @description Transcribe a recorded answer (any format ffmpeg can decode, e.g. webm/opus).
+         */
+        post: operations["transcribe_api_speech_transcribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/speech/synthesize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Synthesize
+         * @description Read text aloud with the tutor's voice; returns a WAV file.
+         */
+        post: operations["synthesize_api_speech_synthesize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_transcribe_api_speech_transcribe_post */
+        Body_transcribe_api_speech_transcribe_post: {
+            /** Audio */
+            audio: string;
+        };
         /** ChatMessage */
         ChatMessage: {
             /**
@@ -322,6 +367,16 @@ export interface components {
         SendMessageRequest: {
             /** Content */
             content?: string | null;
+        };
+        /** SynthesisRequest */
+        SynthesisRequest: {
+            /** Text */
+            text: string;
+        };
+        /** TranscriptionResponse */
+        TranscriptionResponse: {
+            /** Text */
+            text: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -637,6 +692,72 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transcribe_api_speech_transcribe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_transcribe_api_speech_transcribe_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscriptionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    synthesize_api_speech_synthesize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SynthesisRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/wav": unknown;
                 };
             };
             /** @description Validation Error */

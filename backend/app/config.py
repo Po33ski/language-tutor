@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     stale_lesson_hours: float = 6
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Speech (local models, downloaded from Hugging Face on first use).
+    speech_enabled: bool = True
+    whisper_model: str = "large-v3-turbo"
+    whisper_device: str = "auto"  # "auto" | "cuda" | "cpu"
+    # Kokoro voice; the first letter is the accent: "a" = American, "b" = British.
+    tts_voice: str = "af_heart"
+
     @property
     def checkpoints_db_path(self) -> Path:
         return self.data_dir / "checkpoints.db"

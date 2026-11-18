@@ -13,8 +13,9 @@ from langchain_core.language_models import BaseChatModel
 from app.agent.graph import build_model, build_tutor_agent
 from app.agent.summarizer import Summarizer, build_summarizer
 from app.agent.wrapup import end_stale_lessons
-from app.api import health, lessons, profiles
+from app.api import health, lessons, profiles, speech
 from app.config import Settings, get_settings
+from app.speech.service import LocalSpeechService, SpeechService
 from app.storage.persistence import open_persistence
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,9 @@ def create_app(
     settings: Settings | None = None,
     model: BaseChatModel | None = None,
     summarizer: Summarizer | None = None,
+    speech_service: SpeechService | None = None,
 ) -> FastAPI:
-    """Build the app. Tests pass their own settings (temp data dir) and fakes for the LLM."""
+    """Build the app. Tests pass their own settings (temp data dir) and fakes for the models."""
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -38,14 +40,23 @@ def create_app(
             )
             app.state.summarizer = summarizer or build_summarizer(settings)
             app.state.lesson_locks = defaultdict(asyncio.Lock)
-            # Summarize lessons left open last time, without delaying startup.
-            sweep = asyncio.create_task(
-                _end_stale_lessons(app, timedelta(hours=settings.stale_lesson_hours))
+            app.state.speech = speech_service or (
+                LocalSpeechService(settings) if settings.speech_enabled else None
             )
+            # Background jobs, so startup is not delayed: summarize lessons left open last
+            # time, and load the speech models.
+            background = [
+                asyncio.create_task(
+                    _end_stale_lessons(app, timedelta(hours=settings.stale_lesson_hours))
+                )
+            ]
+            if app.state.speech is not None:
+                background.append(asyncio.create_task(_warm_up_speech(app.state.speech)))
             yield
-            sweep.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await sweep
+            for task in background:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
     app = FastAPI(title="Language Tutor API", lifespan=lifespan)
     app.add_middleware(
@@ -54,7 +65,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for router in (health.router, profiles.router, lessons.router):
+    for router in (health.router, profiles.router, lessons.router, speech.router):
         app.include_router(router, prefix="/api")
     return app
 
@@ -75,3 +86,10 @@ async def _end_stale_lessons(app: FastAPI, max_idle: timedelta) -> None:
             logger.info("Ended %d stale lesson(s)", ended)
     except Exception:
         logger.exception("Stale lesson sweep failed")
+
+
+async def _warm_up_speech(speech_service: SpeechService) -> None:
+    try:
+        await speech_service.warm_up()
+    except Exception:
+        logger.exception("Loading speech models failed; speech requests will retry")

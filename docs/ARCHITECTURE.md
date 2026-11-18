@@ -6,7 +6,7 @@ Local-only English tutor: Next.js frontend, FastAPI backend, LangGraph agent on 
 
 ```
 ┌──────────────── Next.js (localhost:3000) ────────────────┐
-│ /profiles  /onboarding  /lesson/[id]  /history           │
+│ /  (profiles, lessons, progress)  /onboarding  /lesson/[id] │
 │ chat + microphone (MediaRecorder) + audio playback       │
 └───────────────┬──────────────────────────────────────────┘
                 │ REST + SSE (streamed replies)
@@ -112,23 +112,26 @@ Checkpointer and store use separate SQLite files so their writes never contend f
 - One turn at a time per lesson (per-lesson lock; a second request gets 409).
 - The system prompt is built from lesson state, so it stays byte-identical for the whole lesson (required by Haiku's thinking-block binding, and good for prompt caching). The model runs with `prefix_mismatch_behavior: "drop_block"` so a lesson survives code changes to the prompt or tools.
 
-## Voice flow (MVP)
+## Voice flow
 
-1. Push-to-talk: browser records audio (MediaRecorder).
-2. `POST /api/stt` → Whisper (`faster-whisper`, large-v3-turbo) → text.
-3. Text is sent immediately as a chat message (no confirmation step).
+1. The learner clicks **Speak**; the browser records with MediaRecorder (webm/opus) until **Stop**.
+2. `POST /api/speech/transcribe` (multipart `audio`) → Whisper (`faster-whisper`, `large-v3-turbo`, English, VAD on, no `initial_prompt`) → `{text}`.
+3. The text is sent immediately as a chat message (no confirmation step).
 4. `POST /api/lessons/{id}/messages` → tutor reply streamed via SSE.
-5. `POST /api/tts` → Kokoro → audio played in the browser.
+5. When the reply is complete and **Voice on** is set, `POST /api/speech/synthesize` → Kokoro (`af_heart`) → WAV played in the browser. Every tutor message also has a replay button.
 
 - A text input is always available as an alternative to the microphone.
-- Known risk: Whisper may "auto-correct" learner grammar in transcripts. Test with intentionally wrong sentences; fall back to NVIDIA Parakeet if needed.
-- Later: sentence-by-sentence TTS to reduce latency.
+- Whisper keeps learner mistakes verbatim (tested: "I am work as developer since five years", "she have", "I have went"). An `initial_prompt` made it correct grammar, so none is used.
+- Both models run in the backend process on the GPU (`app/speech/`); blocking calls run in threads, and the models load in a background task at startup (first run downloads them from Hugging Face, ≈ 2 GB). Speed on an RTX 5070 Ti: ≈ 0.05 s to synthesize a reply, ≈ 1 s to transcribe an answer.
+- CUDA: PyTorch (Kokoro) ships CUDA 13 libraries, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS, provided by `nvidia-cublas-cu12` and preloaded in `app/speech/cuda.py`. `av` is pinned below 16 for `faster-whisper` 1.2.
+- `SPEECH_ENABLED=false` turns speech off (the endpoints return 503).
+- Later: sentence-by-sentence TTS while the reply streams, to cut the wait before the voice starts.
 
 ## Repo layout
 
 ```
 backend/   app/{api, agent, speech, storage, config.py, main.py}, tests/   (uv, ruff, pytest)
-frontend/  src/{app/{profiles, onboarding, lesson/[id], history}, components, lib/api}  (Next.js 16, Tailwind 4 + shadcn/ui)
+frontend/  src/{app/{onboarding, lesson/[id]}, components, hooks, lib/api}  (Next.js 16, Tailwind 4)
 docs/      ARCHITECTURE.md
 ```
 

@@ -45,6 +45,27 @@ class FakeSummarizer:
         return f"Progress after {len(self.progress_calls)} lesson(s)."
 
 
+class FakeSpeech:
+    """Echo-style speech service: no models, deterministic output."""
+
+    def __init__(self) -> None:
+        self.transcript = "I am work as developer"
+        self.fail = False
+
+    async def transcribe(self, audio: bytes) -> str:
+        if self.fail:
+            raise RuntimeError("model unavailable")
+        return self.transcript
+
+    async def synthesize(self, text: str) -> bytes:
+        if self.fail:
+            raise RuntimeError("model unavailable")
+        return b"RIFF" + text.encode()
+
+    async def warm_up(self) -> None:
+        pass
+
+
 def mistake_call(original: str, corrected: str, explanation: str) -> AIMessage:
     args = {"original": original, "corrected": corrected, "explanation": explanation}
     return AIMessage(
@@ -66,14 +87,19 @@ def summarizer() -> FakeSummarizer:
 
 
 @pytest.fixture
-def make_client(tmp_path, summarizer) -> Iterator:
+def speech() -> FakeSpeech:
+    return FakeSpeech()
+
+
+@pytest.fixture
+def make_client(tmp_path, summarizer, speech) -> Iterator:
     """Factory: a test client whose tutor replays the given AI messages."""
     clients = []
 
     def factory(responses: list[AIMessage]) -> TestClient:
         settings = Settings(data_dir=tmp_path, anthropic_api_key="test")
         model = FakeTutorModel(messages=iter(responses))
-        client = TestClient(create_app(settings, model, summarizer))
+        client = TestClient(create_app(settings, model, summarizer, speech))
         client.__enter__()  # run the lifespan (opens SQLite, builds the agent)
         clients.append(client)
         return client
