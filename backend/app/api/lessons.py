@@ -17,7 +17,8 @@ from app.agent.transcript import (
 )
 from app.agent.wrapup import end_lesson
 from app.api.deps import LessonLocksDep, SettingsDep, StoreDep, SummarizerDep, TutorDep
-from app.api.security import rate_limited
+from app.api.security import CurrentUserDep, daily_quota, rate_limited
+from app.auth.store import User
 from app.config import Settings
 from app.storage import memory
 from app.storage.memory import Lesson
@@ -28,7 +29,6 @@ router = APIRouter(prefix="/lessons", tags=["lessons"])
 
 
 class LessonCreate(BaseModel):
-    user_id: str
     # Defaults to the profile's main topic.
     topic: str | None = Field(default=None, max_length=200)
 
@@ -49,30 +49,35 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _require_lesson(store: StoreDep, lesson_id: str) -> Lesson:
+async def _require_lesson(store: StoreDep, lesson_id: str, user: User) -> Lesson:
+    """The lesson if it belongs to the signed-in user. Someone else's lesson is reported as
+    missing (404, not 403), so lesson ids cannot be probed."""
     lesson = await memory.get_lesson(store, lesson_id)
-    if lesson is None:
+    if lesson is None or lesson.user_id != user.profile_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found")
     return lesson
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_lesson(data: LessonCreate, store: StoreDep) -> Lesson:
-    profile = await memory.get_profile(store, data.user_id)
+async def create_lesson(data: LessonCreate, user: CurrentUserDep, store: StoreDep) -> Lesson:
+    profile = await memory.get_profile(store, user.profile_id)
     if profile is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Create your profile first")
     topic = (data.topic or "").strip() or profile.main_topic
     return await memory.create_lesson(store, profile.id, topic)
 
 
 @router.get("")
-async def list_lessons(user_id: str, store: StoreDep) -> list[Lesson]:
-    return await memory.list_lessons(store, user_id)
+async def list_lessons(user: CurrentUserDep, store: StoreDep) -> list[Lesson]:
+    """The signed-in user's lessons, newest first."""
+    return await memory.list_lessons(store, user.profile_id)
 
 
 @router.get("/{lesson_id}")
-async def get_lesson(lesson_id: str, store: StoreDep, tutor: TutorDep) -> LessonDetail:
-    lesson = await _require_lesson(store, lesson_id)
+async def get_lesson(
+    lesson_id: str, user: CurrentUserDep, store: StoreDep, tutor: TutorDep
+) -> LessonDetail:
+    lesson = await _require_lesson(store, lesson_id, user)
     snapshot = await tutor.aget_state(thread_config(lesson_id))
     values = snapshot.values
     return LessonDetail(
@@ -104,19 +109,20 @@ async def _initial_state(store: StoreDep, settings: Settings, lesson: Lesson) ->
 @router.post("/{lesson_id}/end", dependencies=[Depends(rate_limited("tutor"))])
 async def end_lesson_endpoint(
     lesson_id: str,
+    user: CurrentUserDep,
     store: StoreDep,
     tutor: TutorDep,
     summarizer: SummarizerDep,
     locks: LessonLocksDep,
 ) -> Lesson:
     """End the lesson and save its summary to long-term memory. Safe to call twice."""
-    lesson = await _require_lesson(store, lesson_id)
+    lesson = await _require_lesson(store, lesson_id, user)
     lock = locks[lesson_id]
     if lock.locked():
         raise HTTPException(status.HTTP_409_CONFLICT, "The tutor is still answering")
     async with lock:
         # Re-read under the lock: a concurrent request may have ended it already.
-        lesson = await _require_lesson(store, lesson_id)
+        lesson = await _require_lesson(store, lesson_id, user)
         try:
             return await end_lesson(store, tutor, summarizer, lesson)
         except Exception as error:
@@ -128,13 +134,14 @@ async def end_lesson_endpoint(
 
 @router.post(
     "/{lesson_id}/messages",
-    dependencies=[Depends(rate_limited("tutor"))],
+    dependencies=[Depends(rate_limited("tutor")), Depends(daily_quota("tutor_turn"))],
     response_class=StreamingResponse,
     responses={200: {"content": {"text/event-stream": {}}}},
 )
 async def send_message(
     lesson_id: str,
     body: SendMessageRequest,
+    user: CurrentUserDep,
     store: StoreDep,
     tutor: TutorDep,
     locks: LessonLocksDep,
@@ -145,7 +152,7 @@ async def send_message(
     Events: `token` {text}, `mistake` {original, corrected, explanation},
     `vocabulary` {word, meaning, example}, `error` {message}, `done` {}.
     """
-    lesson = await _require_lesson(store, lesson_id)
+    lesson = await _require_lesson(store, lesson_id, user)
     if lesson.status != memory.LessonStatus.ACTIVE:
         raise HTTPException(status.HTTP_409_CONFLICT, "Lesson has already ended")
     lock = locks[lesson_id]

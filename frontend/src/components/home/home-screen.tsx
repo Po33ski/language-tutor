@@ -6,75 +6,60 @@ import { useEffect, useState } from "react";
 
 import { BackendStatus } from "@/components/backend-status";
 import { buttonPrimary, buttonSecondary, card, errorText, input } from "@/components/ui";
+import { useAccount } from "@/components/auth/auth-gate";
 import { api, type Lesson, type Profile, type Progress } from "@/lib/api/client";
-import { setCurrentUserId, useCurrentUserId } from "@/lib/current-user";
 
 export function HomeScreen() {
-  const [profiles, setProfiles] = useState<Profile[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const storedUserId = useCurrentUserId();
-
-  useEffect(() => {
-    api
-      .listProfiles()
-      .then(setProfiles)
-      .catch(() => setError("Could not load profiles. Is the backend running?"));
-  }, []);
-
-  // A stored id may point to a profile that no longer exists.
-  const currentProfile = profiles?.find((profile) => profile.id === storedUserId) ?? null;
+  const { account } = useAccount();
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 px-4 py-12">
       <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Language Tutor</h1>
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-3xl font-semibold tracking-tight">Language Tutor</h1>
+          <Link href="/account" className={buttonSecondary} title={account.email}>
+            Account
+          </Link>
+        </div>
         <p className="text-zinc-600 dark:text-zinc-400">
           Practice English through conversation with an AI tutor.
         </p>
         <BackendStatus />
       </header>
 
-      {error ? <p className={errorText}>{error}</p> : null}
-
-      {profiles === null && !error ? (
-        <p className="text-sm text-zinc-500">Loading profiles…</p>
-      ) : null}
-
-      {profiles !== null && currentProfile === null ? (
-        <ProfilePicker profiles={profiles} />
-      ) : null}
-
-      {currentProfile !== null ? <ProfileHome profile={currentProfile} /> : null}
+      {account.has_profile ? <ProfileLoader /> : <Welcome />}
     </main>
   );
 }
 
-function ProfilePicker({ profiles }: { profiles: Profile[] }) {
+function Welcome() {
   return (
-    <section className="flex flex-col gap-4">
-      <h2 className="text-lg font-medium">
-        {profiles.length > 0 ? "Who is learning today?" : "Welcome! Let's set up your profile."}
-      </h2>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {profiles.map((profile) => (
-          <button
-            key={profile.id}
-            type="button"
-            onClick={() => setCurrentUserId(profile.id)}
-            className={`${card} text-left transition-colors hover:border-zinc-400 dark:hover:border-zinc-600`}
-          >
-            <span className="block font-medium">{profile.name}</span>
-            <span className="block text-sm text-zinc-500">
-              {profile.level} · {profile.main_topic}
-            </span>
-          </button>
-        ))}
-      </div>
-      <Link href="/onboarding" className={`${buttonSecondary} self-start`}>
-        Create a new profile
+    <section className={`${card} flex flex-col gap-3`}>
+      <h2 className="text-lg font-medium">Welcome! Let&apos;s set up your profile.</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        Tell the tutor your level and what you want to practice. It takes a minute.
+      </p>
+      <Link href="/onboarding" className={`${buttonPrimary} self-start`}>
+        Set up my profile
       </Link>
     </section>
   );
+}
+
+function ProfileLoader() {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getProfile()
+      .then(setProfile)
+      .catch(() => setError("Could not load your profile. Try reloading the page."));
+  }, []);
+
+  if (error) return <p className={errorText}>{error}</p>;
+  if (!profile) return <p className="text-sm text-zinc-500">Loading your profile…</p>;
+  return <ProfileHome profile={profile} />;
 }
 
 function ProfileHome({ profile }: { profile: Profile }) {
@@ -88,12 +73,12 @@ function ProfileHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     // Independent requests: run them in parallel.
     api
-      .listLessons(profile.id)
+      .listLessons()
       // Discarded lessons were never really started, so they are not worth listing.
       .then((all) => setLessons(all.filter((lesson) => lesson.status !== "discarded")))
       .catch(() => setLessons([]));
     api
-      .getProgress(profile.id)
+      .getProgress()
       .then(setProgress)
       .catch(() => setProgress(null));
   }, [profile.id]);
@@ -103,7 +88,7 @@ function ProfileHome({ profile }: { profile: Profile }) {
     setStarting(true);
     setError(null);
     try {
-      const lesson = await api.createLesson(profile.id, topic.trim());
+      const lesson = await api.createLesson(topic.trim());
       router.push(`/lesson/${lesson.id}`);
     } catch {
       setError("Could not start the lesson. Try again.");
@@ -113,12 +98,7 @@ function ProfileHome({ profile }: { profile: Profile }) {
 
   return (
     <section className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-xl font-medium">Hi, {profile.name}!</h2>
-        <button type="button" className={buttonSecondary} onClick={() => setCurrentUserId(null)}>
-          Switch profile
-        </button>
-      </div>
+      <h2 className="text-xl font-medium">Hi, {profile.name}!</h2>
 
       {progress ? (
         <section className={`${card} flex flex-col gap-2`}>

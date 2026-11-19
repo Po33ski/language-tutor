@@ -22,12 +22,34 @@ English tutor: Next.js frontend, FastAPI backend, LangGraph agent on Claude Haik
         Anthropic API (claude-haiku-5-5)
 ```
 
-## Users
+## Accounts and authentication
 
-- Multiple local profiles, no login. The user picks or creates a profile on start; the selected `user_id` is kept in browser storage.
-- Access control is one shared secret, not user accounts: with `ACCESS_KEY` set, every endpoint except `GET /api/health` needs `Authorization: Bearer <key>` (`app/api/security.py`). The frontend's `AccessGate` calls `GET /api/auth/check`; on 401 it asks for the key, stores it in localStorage and sends it with every request. Any later 401 clears the key, so the gate asks again. Without a key (local dev) the API is open and the gate lets everything through.
-- The LLM and speech endpoints are rate-limited per client IP in memory (`RATE_LIMIT_PER_MINUTE`, default 30), with a separate budget per group: tutor turns (`/messages`, `/end`), `/speech/transcribe`, `/speech/synthesize`. In-memory state is fine because the backend is a single process.
-- Real user accounts can be added later without changing the data model (everything is already keyed by `user_id`).
+Open signup with email and password; **one account = one learner profile**. Chosen after comparing the usual options (research: OWASP Password Storage and Session Management cheat sheets, NIST SP 800-63B-4, FastAPI's security docs).
+
+```
+signup/login ──► Argon2id check ──► session token (random 256 bit) ──► client keeps it in localStorage
+every request: Authorization: Bearer <token> ──► SHA-256(token) looked up in users.db ──► User
+```
+
+| Decision | Why |
+|---|---|
+| **Opaque session tokens in the database, not JWT** | One backend: a DB lookup is cheap, and logout, password change or expiry revoke a session instantly by deleting its row. JWTs stay valid until they expire unless you add blocklists and refresh tokens. |
+| **Bearer header, not a cookie** | The frontend (`*.vercel.app`) and the API (`*.sslip.io`) are different sites, so a session cookie would be a third-party cookie, which Safari blocks outright (even `SameSite=None`). The same header also suits a future mobile app. With an own domain (`app.` + `api.`), an `HttpOnly` cookie would become possible. |
+| **Only the token's hash is stored** | A copy of `users.db` contains no working tokens. |
+| **Argon2id via `pwdlib`** | OWASP's first choice; pwdlib's defaults (m=64 MiB, t=3, p=4) exceed OWASP's minimum (19 MiB, t=2, p=1). Hashes are rehashed on login if the parameters ever change. Hashing runs in a thread. |
+| **NIST password rules** | At least 15 characters (single-factor), up to 128, NFKC-normalized, no composition rules, rejected if breached (Have I Been Pwned range API: only 5 hex characters of the SHA-1 hash are sent; skipped if the service is down), too repetitive, or containing the email's local part. |
+| **No user enumeration at login** | Same 401 message for an unknown email and a wrong password, and an unknown email still verifies a dummy hash so the timing matches. Signup does say "email taken" (unavoidable without email verification). |
+| **Ownership checks** | Every profile and lesson endpoint works on the signed-in account's `profile_id`; another account's lesson answers 404 (not 403), so ids cannot be probed. |
+
+- **Sessions:** expire after `SESSION_IDLE_DAYS` (30) without use and after `SESSION_MAX_DAYS` (90) in any case; using a session slides its expiry (written at most hourly). Logout deletes the session; a password change deletes all other sessions of the account.
+- **Abuse limits** (signup is open, and each turn costs LLM tokens):
+  - per account and per UTC day: tutor turns (`USER_DAILY_TUTOR_TURNS`, 200) and transcriptions (`USER_DAILY_TRANSCRIPTIONS`, 200); for the whole app: `DAILY_TUTOR_TURNS_TOTAL` (2000). Counted atomically in `users.db` (`daily_usage`);
+  - in memory per IP: `SIGNUPS_PER_IP_PER_HOUR` (5, successful signups), 30 failed logins per 15 min; per email: 10 failed logins per 15 min (also guards the current-password check);
+  - per IP per minute and endpoint group (`RATE_LIMIT_PER_MINUTE`, 30): tutor turns (`/messages`, `/end`), `/speech/transcribe`, `/speech/synthesize`.
+- **No email yet:** no verification and no reset links. A forgotten password is reset with an admin command on the server (`python -m app.auth.cli reset-password EMAIL`), which sets a temporary password and signs out every session.
+- **Profiles from before accounts** stay in the store unlinked; `python -m app.auth.cli claim-profile EMAIL` links the most recently used one (with its lessons and progress) to an account.
+- **Frontend:** `AuthGate` (in the root layout) shows the sign-in / create-account screen until a stored token is confirmed by `GET /api/auth/me`, then provides the account through `useAccount()`. A new account goes straight to onboarding. Any 401 clears the token, which brings the sign-in screen back. `/account` changes the password and signs out.
+- **Browser hardening:** a Content-Security-Policy (`next.config.ts`) whose `connect-src` allows only the site and the API, so even injected script could not send the token elsewhere; no nonces, because nonces need fully dynamic rendering and Partial Prerendering is on. React escapes all rendered text.
 
 ## Onboarding questionnaire
 
@@ -98,6 +120,9 @@ Done by the same model (Claude Haiku 5.5, effort `medium`) in `app/agent/summari
 | Long-term: profiles | Store (`data/memory.db`) | namespace `("profiles",)`, key `user_id` |
 | Long-term: lessons | Store | namespace `("lessons",)`, key `lesson_id`; value has `user_id`, `topic`, `status` (`active` / `summarized` / `discarded`), `ended_at`, `summary` |
 | Long-term: progress profile | Store | namespace `("users", user_id)`, key `"progress"` |
+| Accounts | `data/users.db` (plain SQLite, `app/auth/store.py`) | tables `users` (email, Argon2id hash, `profile_id`), `sessions` (SHA-256 of the token, expiry), `daily_usage` |
+
+The store's `user_id` is the account's `profile_id`, so the learning data did not change shape when accounts were added.
 
 Checkpointer and store use separate SQLite files so their writes never contend for the same lock. Moving to Postgres = swapping to `PostgresSaver` / `PostgresStore`.
 

@@ -21,7 +21,7 @@ More detail lives in other docs:
 
 | Topic | Decision |
 |---|---|
-| Users | Multiple local profiles, no login. The selected `user_id` is kept in localStorage. All data is keyed by `user_id`, so auth can be added later. |
+| Users | Accounts with email + password, **open signup**, **one account = one learner profile** (`users.profile_id` = the store's `user_id`). No email sending yet: no verification, password reset via an admin command. Profiles from before accounts are linked with `claim-profile`. |
 | Onboarding | A form, filled once per profile: name, CEFR level (A1–C2), main topic, goal, optional preferences. A new lesson asks only for its topic, which defaults to the main topic. |
 | Lesson | The tutor speaks first. It drives the topic with role-play, asks one question at a time and keeps replies to 2–4 sentences of plain text, because replies are read aloud. |
 | Corrections | Mentioned briefly and naturally in the reply. Full details (original → corrected + explanation) appear in a side panel. Each correction gives one natural version, never "A / B". |
@@ -29,7 +29,7 @@ More detail lives in other docs:
 | Lesson end | An "End lesson" button triggers a summary and a progress update. Lessons left open are ended automatically at backend startup. |
 | Framework | Stay on LangGraph via LangChain's `create_agent`, not a hand-written graph and not plain LangChain. |
 | Hosting | Frontend on Vercel Hobby; backend in Docker (CPU only) on an Oracle Cloud Always Free ARM VM behind Caddy (HTTPS). GitHub Actions deploys `main` after tests pass. Details: `docs/DEPLOYMENT.md`. |
-| Access | A shared `ACCESS_KEY` (Bearer token) guards every endpoint except health; the frontend asks for it once (`AccessGate`) and keeps it in localStorage. LLM and speech endpoints are rate-limited per IP. Empty key = open API, local dev only. |
+| Auth | Opaque session tokens (not JWT) sent as `Authorization: Bearer`, kept in localStorage (cookies would be third-party across vercel.app/sslip.io and Safari blocks them); only SHA-256 hashes in `users.db`. Argon2id passwords, NIST SP 800-63B-4 rules (≥ 15 chars, breach check). Everything except health/signup/login needs a session. Daily cost limits per account and app-wide, because signup is open. Details: `docs/ARCHITECTURE.md` → Accounts. |
 
 ## Backend (`backend/`)
 
@@ -60,9 +60,11 @@ More detail lives in other docs:
 | Path | Responsibility |
 |---|---|
 | `main.py` | `create_app(settings, model, summarizer, speech_service)`. The lifespan opens persistence, builds the tutor and summarizer, creates per-lesson locks and starts the background tasks (end stale lessons, warm up speech). Tests inject fakes through its parameters. |
-| `config.py` | `Settings` + `get_settings()`. Data lives in `data/checkpoints.db` and `data/memory.db`. |
+| `config.py` | `Settings` + `get_settings()`. Data lives in `data/checkpoints.db`, `data/memory.db` and `data/users.db`. |
 | `api/deps.py` | FastAPI `Depends` aliases: `SettingsDep`, `StoreDep`, `TutorDep`, `SummarizerDep`, `SpeechDep` (503 when speech is disabled), `LessonLocksDep`. Endpoints never build resources themselves. |
-| `api/security.py` | `require_access_key` (Bearer `ACCESS_KEY`, applied to every router but health in `main.py`) and the in-memory per-IP `RateLimiter`. `rate_limited(group)` gives each group its own budget: `tutor` (`/messages`, `/end`), `transcribe`, `synthesize` |
+| `api/security.py` | `CurrentSessionDep` / `CurrentUserDep` (session from the Bearer token; 401 otherwise), `daily_quota(kind)` (per-account and app-wide daily limits in `users.db`), the in-memory `RateLimiter` (`allow`, or `is_limited` + `record` for failed logins) and `rate_limited(group)` per IP: `tutor`, `transcribe`, `synthesize` |
+| `api/auth.py` | signup, login, logout, me, password change; `AuthLimiters` (signups per IP, failed logins per IP and per email) |
+| `auth/` | `passwords.py` (Argon2id via pwdlib, policy, HIBP breach check), `store.py` (`UserStore`: aiosqlite on `data/users.db`, users / sessions / daily_usage, schema via `PRAGMA user_version`), `cli.py` (`list-users`, `reset-password`, `claim-profile`) |
 | `api/{health,auth,profiles,lessons,speech}.py` | Routers, all under the `/api` prefix. `lessons.py` holds the SSE turn endpoint and `_initial_state`, which copies long-term memory into a new lesson. |
 | `agent/graph.py` | `build_model`, `build_tutor_agent` (`create_agent` + middleware `tutor_prompt` and `end_turn_if_already_replied`) |
 | `agent/state.py` | `TutorState(AgentState)`: `user_id`, `profile`, `topic`, `progress`, `previous_summaries`, plus append-only `mistakes` and `vocabulary` lists. `Mistake` and `VocabularyItem` are TypedDicts. |
@@ -96,7 +98,7 @@ More detail lives in other docs:
 - One lesson turn is `POST /api/lessons/{id}/messages`. It streams SSE events: `token`, `mistake`, `vocabulary`, `error`, `done`. `content: null` starts the lesson.
 - Only one turn runs per lesson at a time, enforced by an `asyncio.Lock` per lesson. A request while the tutor is still answering, or for an ended lesson, gets 409.
 - The frontend calls the backend at `NEXT_PUBLIC_API_URL` directly (`localhost:8000` in dev, the production API in prod), with CORS enabled. There is no Next.js proxy, because a proxy can buffer SSE.
-- Every endpoint except `GET /api/health` needs `Authorization: Bearer <ACCESS_KEY>` when a key is set; the frontend adds it in `apiFetch` (`lib/api/client.ts`).
+- Every endpoint except health, signup and login needs `Authorization: Bearer <session token>`; the frontend adds it in `apiFetch` (`lib/api/client.ts`). Profile endpoints are `/api/profile` (singular, the account's own); lessons are filtered and checked by the account's `profile_id` (someone else's lesson → 404).
 - After changing any Pydantic model or endpoint, regenerate the frontend types with `npm run gen:api` while the backend is running. Also update `README.md`.
 
 ### Gotchas (hard-won; do not regress)
@@ -122,7 +124,7 @@ More detail lives in other docs:
   - `FakeTutorModel`: a `GenericFakeChatModel` subclass with `bind_tools` returning self and `disable_streaming=True`;
   - `FakeSummarizer`;
   - `FakeSpeech`;
-  - the `make_client` fixture, which uses a temporary data dir.
+  - the `make_client` fixture, which uses a temporary data dir and signs in a fresh account (`signed_in=False` for an anonymous client; `sign_up(client, email)` switches the client to another account). It turns the breached-password network check off.
 - The SSE token filter must accept both `AIMessageChunk` and `AIMessage`, because the fake model does not stream.
 
 ## Frontend (`frontend/`)
@@ -141,15 +143,16 @@ More detail lives in other docs:
 
 | Path | Responsibility |
 |---|---|
-| `app/page.tsx`, `app/onboarding/page.tsx`, `app/lesson/[id]/page.tsx` | Routes: home (profiles, progress, lessons), onboarding form, lesson |
+| `app/page.tsx`, `app/onboarding/page.tsx`, `app/lesson/[id]/page.tsx` | Routes: home (the account's profile, progress, lessons), onboarding form, lesson |
 | `components/home/`, `components/onboarding/` | Home screen and onboarding form |
 | `components/lesson/` | `lesson-view` (orchestrates a lesson), `message-list` (bubbles + replay), `message-composer` (textarea, Speak/Stop, Send), `feedback-panel` (corrections + vocabulary), `lesson-summary-card` |
 | `components/backend-status.tsx` | The "Backend online" indicator |
 | `hooks/use-recorder.ts`, `hooks/use-speaker.ts` | Mic recording; TTS playback. `useSpeaker` reads text sentence by sentence (`startStream().push/finish` while a reply streams, `speak` for replay): synthesis requests run one at a time in order, playback follows through one reused `<audio>` element, and a generation counter drops cancelled work |
 | `lib/sentences.ts` | `takeSentences` (split finished sentences off streamed text; skips short fragments and abbreviations like "Mr.") and `splitSentences` |
 | `lib/api/client.ts` | The `api` object (REST calls), `streamTutorTurn` (SSE parser), `ApiError` |
-| `lib/stored-value.ts` | `createStoredValue(key)`: localStorage plus `useSyncExternalStore`. Used by `current-user.ts`, `voice-settings.ts` and `access-key.ts`. |
-| `components/access-gate.tsx`, `lib/access-key.ts` | Wraps the app in `layout.tsx`: calls `GET /api/auth/check`, asks for the access key on 401 and stores it. Any later 401 clears the key, so the gate asks again. |
+| `lib/stored-value.ts` | `createStoredValue(key)`: localStorage plus `useSyncExternalStore`. Used by `session.ts` and `voice-settings.ts`. |
+| `components/auth/auth-gate.tsx`, `lib/session.ts` | `AuthGate` wraps the app in `layout.tsx`: sign-in / create-account screen (`auth-screen.tsx`) until `GET /api/auth/me` confirms the stored session token; then `useAccount()` gives `{account, refresh, signOut}`. Any 401 clears the token. A new account goes to `/onboarding`. |
+| `app/account/page.tsx`, `components/account/` | Change password, sign out |
 
 ### Conventions and gotchas
 
@@ -179,15 +182,16 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
 | What | Where |
 |---|---|
 | Frontend | https://language-tutor-sigma.vercel.app (Vercel Hobby, project `language-tutor`, scope `tutor-16ad`). Per-deployment URLs change every deploy; always use this alias. |
-| Backend | https://92-5-78-54.sslip.io (Caddy → backend container). `GET /api/health` is public; everything else needs the access key. |
+| Backend | https://92-5-78-54.sslip.io (Caddy → backend container). Health, signup and login are public; everything else needs a session. |
 | Server | Oracle Cloud Always Free, `VM.Standard.A1.Flex` (ARM, 4 OCPU, 12 GB, 100 GB disk), Ubuntu 24.04 aarch64, IP `92.5.78.54`, user `ubuntu`. Network: VCN `tutor-vcn`, public subnet; ports 80/443 open in its *Default Security List* and in iptables. |
 | Code on the server | `~/language-tutor`, a clone over a read-only deploy key (`~/.ssh/github_deploy`). CI checks out the deployed commit detached. |
-| Server secrets | `~/language-tutor/deploy/.env` (mode 600): `API_DOMAIN`, `ANTHROPIC_API_KEY`, `ACCESS_KEY`, `CORS_ORIGINS=["https://language-tutor-sigma.vercel.app"]`, `STT_PROVIDER=groq`, `GROQ_API_KEY`, `WHISPER_MODEL=small` (fallback). Never print it or read secrets from it into the chat. |
-| Data | Docker volumes `tutor-data` (SQLite) and `tutor-models` (HF cache); `caddy-data` holds the TLS certificate (Let's Encrypt, auto-renewed). |
+| Server secrets | `~/language-tutor/deploy/.env` (mode 600): `API_DOMAIN`, `ANTHROPIC_API_KEY`, `CORS_ORIGINS=["https://language-tutor-sigma.vercel.app"]`, `STT_PROVIDER=groq`, `GROQ_API_KEY`, `WHISPER_MODEL=small` (fallback). Never print it or read secrets from it into the chat. |
+| Data | Docker volumes `tutor-data` (SQLite: checkpoints, memory, users) and `tutor-models` (HF cache); `caddy-data` holds the TLS certificate (Let's Encrypt, auto-renewed). |
 | GitHub Actions | Secrets `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_HOST`, `SSH_USER`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`; variable `API_URL`. Vercel env: `NEXT_PUBLIC_API_URL` (production). |
 
 - **Flow:** push to `main` → path-filtered `backend.yml` (`backend/**`, `deploy/**`) / `frontend.yml` (`frontend/**`) run the checks, then deploy. PRs and other branches only run the checks. Manual redeploy: Actions → Run workflow on `main`.
 - **Server access from this machine:** `ssh -i ~/.ssh/language-tutor-ci -o IdentitiesOnly=yes ubuntu@92.5.78.54` works non-interactively (the CI key). The developer's own key (`~/.ssh/id_ed25519`) has a passphrase. Ask before changing anything on the server.
+- **Account admin on the server:** `docker compose exec backend python -m app.auth.cli list-users | reset-password EMAIL | claim-profile EMAIL` (see `docs/DEPLOYMENT.md` → Accounts).
 - **Manual on the server:** changes to `deploy/.env` (then `cd ~/language-tutor/deploy && docker compose up -d`), OS updates, a new setting that needs a value. Logs: `docker compose logs -f backend`.
 - **Not set up yet:** the nightly backup cron (`deploy/backup.sh`) and an Anthropic spend limit.
 - **Gotchas:**
@@ -198,6 +202,7 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
   - iptables: the `REJECT` rule is at a different position on different image builds; insert the HTTP/HTTPS rules above it (see `docs/DEPLOYMENT.md`).
   - Free Oracle accounts reclaim instances idle (CPU, network and memory all < 20%) for 7 days; 12 GB RAM keeps memory use above that with the speech models loaded.
   - `astral-sh/setup-uv` has no floating major tag: pin a full version (`v10.3.3`).
+  - The CSP in `frontend/next.config.ts` limits `connect-src` to the site and `NEXT_PUBLIC_API_URL`'s origin: a new external service the browser calls must be added there.
   - Groq detects the audio format from the upload's file name; `groq_stt.upload_filename` names it after the magic bytes (WebM from Chrome/Android, MP4 from Safari/iOS).
 
 ## Environment
@@ -207,7 +212,10 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
 
 ## Not done yet (ideas, only on request)
 
-- PostgreSQL for prod, real user accounts (instead of one shared access key)
+- PostgreSQL for prod
+- Email: address verification and password reset links (needs an own domain + a mail service)
+- Account deletion, data export
+- Bot protection on signup (e.g. Cloudflare Turnstile) if spam accounts appear
 - A mobile app (React Native/Expo or a PWA) on top of the same API
 - Prompt caching
 - Retry after a failed tutor turn

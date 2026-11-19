@@ -21,7 +21,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/auth/check": {
+    "/api/auth/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign Up
+         * @description Create an account and sign in. The learner profile is created next (onboarding).
+         */
+        post: operations["sign_up_api_auth_signup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign In */
+        post: operations["sign_in_api_auth_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign Out
+         * @description End this session (the token stops working immediately).
+         */
+        post: operations["sign_out_api_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_auth_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Password
+         * @description Change the password; every other session of this account is signed out.
+         */
+        post: operations["change_password_api_auth_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profile": {
         parameters: {
             query?: never;
             header?: never;
@@ -29,55 +123,23 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Check Access
-         * @description Succeed (204) when the request may use the API: the access key is valid, or none
-         *     is configured. Mounted with the access key dependency, which returns 401 otherwise.
+         * Get Profile
+         * @description 404 until the onboarding form has been filled in.
          */
-        get: operations["check_access_api_auth_check_get"];
+        get: operations["get_profile_api_profile_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Profile
+         * @description Create the profile from the onboarding form; 409 if the account already has one.
+         */
+        post: operations["create_profile_api_profile_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/profiles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Profiles */
-        get: operations["list_profiles_api_profiles_get"];
-        put?: never;
-        /** Create Profile */
-        post: operations["create_profile_api_profiles_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/profiles/{user_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Profile */
-        get: operations["get_profile_api_profiles__user_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/profiles/{user_id}/progress": {
+    "/api/profile/progress": {
         parameters: {
             query?: never;
             header?: never;
@@ -88,7 +150,7 @@ export interface paths {
          * Get Progress
          * @description The learner's progress profile; null until the first lesson is summarized.
          */
-        get: operations["get_progress_api_profiles__user_id__progress_get"];
+        get: operations["get_progress_api_profile_progress_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -104,7 +166,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Lessons */
+        /**
+         * List Lessons
+         * @description The signed-in user's lessons, newest first.
+         */
         get: operations["list_lessons_api_lessons_get"];
         put?: never;
         /** Create Lesson */
@@ -219,6 +284,26 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Account */
+        Account: {
+            /** Id */
+            id: string;
+            /** Email */
+            email: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Has Profile */
+            has_profile: boolean;
+        };
+        /** AuthResponse */
+        AuthResponse: {
+            /** Token */
+            token: string;
+            account: components["schemas"]["Account"];
+        };
         /** Body_transcribe_api_speech_transcribe_post */
         Body_transcribe_api_speech_transcribe_post: {
             /** Audio */
@@ -233,6 +318,16 @@ export interface components {
             role: "user" | "assistant";
             /** Content */
             content: string;
+        };
+        /** Credentials */
+        Credentials: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /** Password */
+            password: string;
         };
         /**
          * EnglishLevel
@@ -270,8 +365,6 @@ export interface components {
         };
         /** LessonCreate */
         LessonCreate: {
-            /** User Id */
-            user_id: string;
             /** Topic */
             topic?: string | null;
         };
@@ -329,6 +422,13 @@ export interface components {
             corrected: string;
             /** Explanation */
             explanation: string;
+        };
+        /** PasswordChange */
+        PasswordChange: {
+            /** Current Password */
+            current_password: string;
+            /** New Password */
+            new_password: string;
         };
         /** Profile */
         Profile: {
@@ -450,7 +550,73 @@ export interface operations {
             };
         };
     };
-    check_access_api_auth_check_get: {
+    sign_up_api_auth_signup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Credentials"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_in_api_auth_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Credentials"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_out_api_auth_logout_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -468,7 +634,7 @@ export interface operations {
             };
         };
     };
-    list_profiles_api_profiles_get: {
+    me_api_auth_me_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -483,12 +649,63 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Profile"][];
+                    "application/json": components["schemas"]["Account"];
                 };
             };
         };
     };
-    create_profile_api_profiles_post: {
+    change_password_api_auth_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_api_profile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+        };
+    };
+    create_profile_api_profile_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -521,44 +738,11 @@ export interface operations {
             };
         };
     };
-    get_profile_api_profiles__user_id__get: {
+    get_progress_api_profile_progress_get: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                user_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Profile"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_progress_api_profiles__user_id__progress_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                user_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -572,22 +756,11 @@ export interface operations {
                     "application/json": components["schemas"]["Progress"] | null;
                 };
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
     list_lessons_api_lessons_get: {
         parameters: {
-            query: {
-                user_id: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -601,15 +774,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Lesson"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, sta
 from pydantic import BaseModel, Field
 
 from app.api.deps import SpeechDep
-from app.api.security import rate_limited
+from app.api.security import daily_quota, get_current_user, rate_limited
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/speech", tags=["speech"])
+router = APIRouter(prefix="/speech", tags=["speech"], dependencies=[Depends(get_current_user)])
 
 # ~10 minutes of compressed browser audio; far more than one spoken answer.
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
@@ -22,7 +22,10 @@ class SynthesisRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
-@router.post("/transcribe", dependencies=[Depends(rate_limited("transcribe"))])
+@router.post(
+    "/transcribe",
+    dependencies=[Depends(rate_limited("transcribe")), Depends(daily_quota("transcription"))],
+)
 async def transcribe(audio: UploadFile, speech: SpeechDep) -> TranscriptionResponse:
     """Transcribe a recorded answer (any format ffmpeg can decode, e.g. webm/opus)."""
     data = await audio.read(MAX_AUDIO_BYTES + 1)

@@ -20,7 +20,7 @@ from pathlib import Path
 
 target = Path("/data/backups") / sys.argv[1]
 target.mkdir(parents=True)
-for db in ("checkpoints.db", "memory.db"):
+for db in ("checkpoints.db", "memory.db", "users.db"):
     source = sqlite3.connect(f"/data/{db}")
     copy = sqlite3.connect(target / db)
     source.backup(copy)

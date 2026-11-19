@@ -2,11 +2,13 @@ import asyncio
 from collections import defaultdict
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, HTTPException, Request, status
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 
 from app.agent.summarizer import Summarizer
+from app.auth.store import UserStore
 from app.config import Settings
 from app.speech.service import SpeechService
 
@@ -39,7 +41,18 @@ def get_lesson_locks(request: Request) -> defaultdict[str, asyncio.Lock]:
     return request.app.state.lesson_locks
 
 
+def get_users(request: Request) -> UserStore:
+    return request.app.state.users
+
+
+def get_http(request: Request) -> httpx.AsyncClient:
+    """Shared HTTP client for outgoing calls (the breached-password check)."""
+    return request.app.state.http
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+UsersDep = Annotated[UserStore, Depends(get_users)]
+HttpDep = Annotated[httpx.AsyncClient, Depends(get_http)]
 StoreDep = Annotated[BaseStore, Depends(get_store)]
 TutorDep = Annotated[CompiledStateGraph, Depends(get_tutor)]
 SummarizerDep = Annotated[Summarizer, Depends(get_summarizer)]

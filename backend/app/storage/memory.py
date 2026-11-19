@@ -80,8 +80,11 @@ class Progress(BaseModel):
 # --- Profiles -----------------------------------------------------------------
 
 
-async def create_profile(store: BaseStore, data: ProfileCreate) -> Profile:
-    profile = Profile(id=uuid4().hex, created_at=_now(), **data.model_dump())
+async def create_profile(
+    store: BaseStore, data: ProfileCreate, profile_id: str | None = None
+) -> Profile:
+    """`profile_id` comes from the account that owns the profile (`users.profile_id`)."""
+    profile = Profile(id=profile_id or uuid4().hex, created_at=_now(), **data.model_dump())
     await store.aput(PROFILES_NS, profile.id, profile.model_dump(mode="json"))
     return profile
 
