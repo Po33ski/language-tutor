@@ -7,7 +7,7 @@ An English-learning app. An AI tutor runs a spoken or written conversation lesso
 - **Speech (local, GPU):** Whisper `large-v3-turbo` (speech to text), Kokoro-82M (text to speech)
 - **Memory:** SQLite. Short-term memory is the LangGraph checkpointer; long-term memory is the LangGraph Store.
 
-Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Deployment (Vercel + Oracle Cloud, CI/CD with GitHub Actions) is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Running locally
 
@@ -17,7 +17,7 @@ Requirements: [uv](https://docs.astral.sh/uv/), Node.js 22+, an [Anthropic API k
 # Backend (http://localhost:8000)
 cd backend
 cp .env.example .env      # then set ANTHROPIC_API_KEY
-uv sync
+uv sync --extra gpu       # NVIDIA GPU; use --extra cpu without one
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
@@ -40,7 +40,7 @@ cd frontend && npm run lint && npx tsc --noEmit
 
 ## Backend API
 
-The backend exposes **12 endpoints** in 4 groups (routers), all under the `/api` prefix. Request and response shapes are defined by **Pydantic models**; FastAPI uses them to validate data and to generate the API docs. Interactive docs, where every endpoint can be called by hand, are at **http://localhost:8000/docs**.
+The backend exposes **13 endpoints** in 5 groups (routers), all under the `/api` prefix. Request and response shapes are defined by **Pydantic models**; FastAPI uses them to validate data and to generate the API docs. Interactive docs, where every endpoint can be called by hand, are at **http://localhost:8000/docs**.
 
 ### Endpoints
 
@@ -50,7 +50,15 @@ The backend exposes **12 endpoints** in 4 groups (routers), all under the `/api`
 |---|---|
 | `GET /api/health` | Checks that the backend is alive and returns `{"status": "ok"}`. Used by the "Backend online" indicator. |
 
-#### 2. Profiles: [`profiles.py`](backend/app/api/profiles.py)
+Every endpoint except health requires `Authorization: Bearer <ACCESS_KEY>` when `ACCESS_KEY` is set (always on a public server). Without it, for local development, the API is open.
+
+#### 2. Auth: [`auth.py`](backend/app/api/auth.py)
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/auth/check` | Returns 204 when the request may use the API (valid access key, or none configured) and 401 otherwise. The frontend calls it to decide whether to ask for the key. |
+
+#### 3. Profiles: [`profiles.py`](backend/app/api/profiles.py)
 
 | Endpoint | Request | Response | What it does |
 |---|---|---|---|
@@ -59,7 +67,7 @@ The backend exposes **12 endpoints** in 4 groups (routers), all under the `/api`
 | `GET /api/profiles/{user_id}` | – | `Profile` | One profile (404 if it does not exist). |
 | `GET /api/profiles/{user_id}/progress` | – | `Progress` or `null` | The progress profile for the "Your progress" card; `null` until the first lesson is summarized. |
 
-#### 3. Lessons: [`lessons.py`](backend/app/api/lessons.py)
+#### 4. Lessons: [`lessons.py`](backend/app/api/lessons.py)
 
 | Endpoint | Request | Response | What it does |
 |---|---|---|---|
@@ -81,7 +89,7 @@ The backend exposes **12 endpoints** in 4 groups (routers), all under the `/api`
 
 Sending `content: null` **starts the lesson**: the tutor greets the learner and asks the first question.
 
-#### 4. Speech: [`speech.py`](backend/app/api/speech.py)
+#### 5. Speech: [`speech.py`](backend/app/api/speech.py)
 
 | Endpoint | Request | Response | What it does |
 |---|---|---|---|
@@ -92,10 +100,12 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 
 | Code | When |
 |---|---|
+| **401** | Missing or wrong access key. |
 | **404** | The profile or lesson does not exist. |
 | **409** | The lesson has already ended, or the tutor is still answering (one turn at a time per lesson). |
 | **422** | Invalid input, e.g. an empty message or an empty recording. |
 | **413** | The recording is larger than 10 MB. |
+| **429** | Rate limit hit on `/messages`, `/end` or a speech endpoint (`RATE_LIMIT_PER_MINUTE` per client IP). |
 | **502** | The lesson summary could not be generated; the lesson stays open and can be ended again. |
 | **503** | Speech is disabled (`SPEECH_ENABLED=false`). |
 
@@ -173,3 +183,6 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `SPEECH_ENABLED` | `true` | Turns the speech endpoints on or off. |
 | `WHISPER_MODEL` / `WHISPER_DEVICE` | `large-v3-turbo` / `auto` | Speech-to-text model and device (`auto`, `cuda`, `cpu`). |
 | `TTS_VOICE` | `af_heart` | Kokoro voice; the first letter is the accent (`a` = American, `b` = British). |
+| `ACCESS_KEY` | empty | Shared secret required as `Authorization: Bearer <key>`. Empty disables auth (local only). |
+| `RATE_LIMIT_PER_MINUTE` | `30` | Requests per minute per client IP to the LLM and speech endpoints; `0` = unlimited. |
+| `CORS_ORIGINS` / `CORS_ORIGIN_REGEX` | `["http://localhost:3000"]` / none | Origins allowed to call the API from a browser. |

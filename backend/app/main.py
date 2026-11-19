@@ -6,14 +6,15 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.language_models import BaseChatModel
 
 from app.agent.graph import build_model, build_tutor_agent
 from app.agent.summarizer import Summarizer, build_summarizer
 from app.agent.wrapup import end_stale_lessons
-from app.api import health, lessons, profiles, speech
+from app.api import auth, health, lessons, profiles, speech
+from app.api.security import RateLimiter, require_access_key
 from app.config import Settings, get_settings
 from app.speech.service import LocalSpeechService, SpeechService
 from app.storage.persistence import open_persistence
@@ -40,6 +41,13 @@ def create_app(
             )
             app.state.summarizer = summarizer or build_summarizer(settings)
             app.state.lesson_locks = defaultdict(asyncio.Lock)
+            app.state.rate_limiter = (
+                RateLimiter(settings.rate_limit_per_minute)
+                if settings.rate_limit_per_minute > 0
+                else None
+            )
+            if not settings.access_key:
+                logger.warning("ACCESS_KEY is not set: anyone who can reach the API can use it")
             app.state.speech = speech_service or (
                 LocalSpeechService(settings) if settings.speech_enabled else None
             )
@@ -62,11 +70,14 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=settings.cors_origin_regex,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for router in (health.router, profiles.router, lessons.router, speech.router):
-        app.include_router(router, prefix="/api")
+    # Health stays public for uptime checks; everything else needs the access key.
+    app.include_router(health.router, prefix="/api")
+    for router in (auth.router, profiles.router, lessons.router, speech.router):
+        app.include_router(router, prefix="/api", dependencies=[Depends(require_access_key)])
     return app
 
 

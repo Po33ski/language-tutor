@@ -1,13 +1,14 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.api.deps import SpeechDep
+from app.api.security import rate_limit
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/speech", tags=["speech"])
+router = APIRouter(prefix="/speech", tags=["speech"], dependencies=[Depends(rate_limit)])
 
 # ~10 minutes of compressed browser audio; far more than one spoken answer.
 MAX_AUDIO_BYTES = 10 * 1024 * 1024

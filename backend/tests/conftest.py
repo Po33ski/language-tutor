@@ -96,8 +96,8 @@ def make_client(tmp_path, summarizer, speech) -> Iterator:
     """Factory: a test client whose tutor replays the given AI messages."""
     clients = []
 
-    def factory(responses: list[AIMessage]) -> TestClient:
-        settings = Settings(data_dir=tmp_path, anthropic_api_key="test")
+    def factory(responses: list[AIMessage], **settings_overrides) -> TestClient:
+        settings = Settings(data_dir=tmp_path, anthropic_api_key="test", **settings_overrides)
         model = FakeTutorModel(messages=iter(responses))
         client = TestClient(create_app(settings, model, summarizer, speech))
         client.__enter__()  # run the lifespan (opens SQLite, builds the agent)

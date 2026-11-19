@@ -1,0 +1,69 @@
+name: Backend
+
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**", "deploy/**", ".github/workflows/backend.yml"]
+  pull_request:
+    paths: ["backend/**", "deploy/**", ".github/workflows/backend.yml"]
+  # Manual redeploy of main (Actions tab → Backend → Run workflow).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # `uv run` would otherwise re-sync to the default (CUDA) torch build.
+      UV_NO_SYNC: "1"
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv publishes only full version tags (no floating "v10").
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --frozen --extra cpu
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+
+  deploy:
+    name: Deploy to the server
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-backend
+      cancel-in-progress: false
+    steps:
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Check out the tested commit on the server and rebuild
+        env:
+          SSH_TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          ssh "$SSH_TARGET" "cd ~/language-tutor \
+            && git fetch --quiet origin \
+            && git checkout --quiet --detach $COMMIT \
+            && deploy/deploy.sh"
+
+      - name: Check the public endpoint
+        env:
+          API_URL: ${{ vars.API_URL }}
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-all-errors "$API_URL/api/health"
