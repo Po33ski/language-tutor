@@ -49,8 +49,8 @@ More detail lives in other docs:
 |---|---|---|---|
 | Tutor (each lesson turn) | Claude Haiku 5.5, `anthropic:claude-haiku-5-5` | Anthropic API | `LLM_MODEL`, `TUTOR_EFFORT=low` (fast replies; an eval of 15 sentences showed `low` corrects well) |
 | Lesson summary + progress profile | Claude Haiku 5.5 | Anthropic API | `SUMMARY_EFFORT=medium`; ≈ 10 s and ≈ $0.003 per lesson |
-| Speech to text | Whisper `large-v3-turbo` (faster-whisper / CTranslate2) | local GPU, float16 (CPU fallback: int8) | `WHISPER_MODEL`, `WHISPER_DEVICE=auto` |
-| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV | local GPU | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British) |
+| Speech to text | Whisper `large-v3-turbo` locally, `small` on the server (faster-whisper / CTranslate2) | local GPU, float16; server CPU, int8 | `WHISPER_MODEL`, `WHISPER_DEVICE=auto` (`cpu` in the image) |
+| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV | local GPU; server CPU | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British) |
 
 - The LLM is created with `init_chat_model("provider:model")`, so the provider can change through configuration alone. Haiku was chosen for cost; it may be replaced later.
 - The speech models download from Hugging Face on first run (≈ 2 GB). They load in a background task at startup. Calls block, so they run through `asyncio.to_thread`.
@@ -95,7 +95,8 @@ More detail lives in other docs:
 
 - One lesson turn is `POST /api/lessons/{id}/messages`. It streams SSE events: `token`, `mistake`, `vocabulary`, `error`, `done`. `content: null` starts the lesson.
 - Only one turn runs per lesson at a time, enforced by an `asyncio.Lock` per lesson. A request while the tutor is still answering, or for an ended lesson, gets 409.
-- The frontend calls `localhost:8000` directly, with CORS enabled. There is no Next.js proxy, because a proxy can buffer SSE.
+- The frontend calls the backend at `NEXT_PUBLIC_API_URL` directly (`localhost:8000` in dev, the production API in prod), with CORS enabled. There is no Next.js proxy, because a proxy can buffer SSE.
+- Every endpoint except `GET /api/health` needs `Authorization: Bearer <ACCESS_KEY>` when a key is set; the frontend adds it in `apiFetch` (`lib/api/client.ts`).
 - After changing any Pydantic model or endpoint, regenerate the frontend types with `npm run gen:api` while the backend is running. Also update `README.md`.
 
 ### Gotchas (hard-won; do not regress)
@@ -146,7 +147,8 @@ More detail lives in other docs:
 | `components/backend-status.tsx` | The "Backend online" indicator |
 | `hooks/use-recorder.ts`, `hooks/use-speaker.ts` | Mic recording; TTS playback with a generation counter, so stale audio never plays |
 | `lib/api/client.ts` | The `api` object (REST calls), `streamTutorTurn` (SSE parser), `ApiError` |
-| `lib/stored-value.ts` | `createStoredValue(key)`: localStorage plus `useSyncExternalStore`. Used by `current-user.ts` and `voice-settings.ts`. |
+| `lib/stored-value.ts` | `createStoredValue(key)`: localStorage plus `useSyncExternalStore`. Used by `current-user.ts`, `voice-settings.ts` and `access-key.ts`. |
+| `components/access-gate.tsx`, `lib/access-key.ts` | Wraps the app in `layout.tsx`: calls `GET /api/auth/check`, asks for the access key on 401 and stores it. Any later 401 clears the key, so the gate asks again. |
 
 ### Conventions and gotchas
 
@@ -164,18 +166,47 @@ More detail lives in other docs:
 | Backend dev server | `cd backend && uv run uvicorn app.main:app --reload --port 8000` |
 | Backend checks | `cd backend && uv run ruff check . && uv run ruff format --check . && uv run pytest` |
 | Frontend dev server | `cd frontend && npm run dev` (http://localhost:3000) |
-| Frontend checks | `cd frontend && npm run lint && npx tsc --noEmit` |
+| Backend setup | `cd backend && uv sync --extra gpu` (`--extra cpu` without an NVIDIA GPU) |
+| Frontend checks | `cd frontend && npm run lint && npx tsc --noEmit` (on a clean checkout run `npx next typegen` first) |
 | Regenerate API types (backend running) | `cd frontend && npm run gen:api` |
 | Interactive API docs | http://localhost:8000/docs |
+
+## Production deployment
+
+Full setup guide: `docs/DEPLOYMENT.md`. Live state:
+
+| What | Where |
+|---|---|
+| Frontend | https://language-tutor-sigma.vercel.app (Vercel Hobby, project `language-tutor`, scope `tutor-16ad`). Per-deployment URLs change every deploy; always use this alias. |
+| Backend | https://92-5-78-54.sslip.io (Caddy → backend container). `GET /api/health` is public; everything else needs the access key. |
+| Server | Oracle Cloud Always Free, `VM.Standard.A1.Flex` (ARM, 4 OCPU, 12 GB, 100 GB disk), Ubuntu 24.04 aarch64, IP `92.5.78.54`, user `ubuntu`. Network: VCN `tutor-vcn`, public subnet; ports 80/443 open in its *Default Security List* and in iptables. |
+| Code on the server | `~/language-tutor`, a clone over a read-only deploy key (`~/.ssh/github_deploy`). CI checks out the deployed commit detached. |
+| Server secrets | `~/language-tutor/deploy/.env` (mode 600): `API_DOMAIN`, `ANTHROPIC_API_KEY`, `ACCESS_KEY`, `CORS_ORIGINS=["https://language-tutor-sigma.vercel.app"]`, `WHISPER_MODEL=small`. Never print it or read secrets from it into the chat. |
+| Data | Docker volumes `tutor-data` (SQLite) and `tutor-models` (HF cache); `caddy-data` holds the TLS certificate (Let's Encrypt, auto-renewed). |
+| GitHub Actions | Secrets `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_HOST`, `SSH_USER`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`; variable `API_URL`. Vercel env: `NEXT_PUBLIC_API_URL` (production). |
+
+- **Flow:** push to `main` → path-filtered `backend.yml` (`backend/**`, `deploy/**`) / `frontend.yml` (`frontend/**`) run the checks, then deploy. PRs and other branches only run the checks. Manual redeploy: Actions → Run workflow on `main`.
+- **Server access from this machine:** `ssh -i ~/.ssh/language-tutor-ci -o IdentitiesOnly=yes ubuntu@92.5.78.54` works non-interactively (the CI key). The developer's own key (`~/.ssh/id_ed25519`) has a passphrase. Ask before changing anything on the server.
+- **Manual on the server:** changes to `deploy/.env` (then `cd ~/language-tutor/deploy && docker compose up -d`), OS updates, a new setting that needs a value. Logs: `docker compose logs -f backend`.
+- **Not set up yet:** the nightly backup cron (`deploy/backup.sh`) and an Anthropic spend limit.
+- **Gotchas:**
+  - `NEXT_PUBLIC_API_URL` is inlined at build time: change it in Vercel, then redeploy the frontend.
+  - `CORS_ORIGINS` must list the Vercel production alias, not a per-deployment URL.
+  - Oracle's instance wizard cannot give a public IP when it creates the VCN itself: create the VCN first ("Create VCN with Internet Connectivity"), then pick its public subnet.
+  - Ingress rules go into the public subnet's *Default Security List*; the wizard also creates a private-subnet list that looks similar (SSH only from `10.0.0.0/16`).
+  - iptables: the `REJECT` rule is at a different position on different image builds; insert the HTTP/HTTPS rules above it (see `docs/DEPLOYMENT.md`).
+  - Free Oracle accounts reclaim instances idle (CPU, network and memory all < 20%) for 7 days; 12 GB RAM keeps memory use above that with the speech models loaded.
+  - `astral-sh/setup-uv` has no floating major tag: pin a full version (`v10.3.3`).
 
 ## Environment
 
 - Windows + WSL2 (Linux). GPU: NVIDIA RTX 5070 Ti (Blackwell, sm_120), which needs recent torch/CUDA builds.
-- Speed on this machine: Whisper ≈ 1 s per answer, Kokoro ≈ 0.05 s per reply once warm.
+- Speed on this machine: Whisper ≈ 1 s per answer, Kokoro ≈ 0.05 s per reply once warm. On a desktop CPU only: Kokoro ≈ 0.6 s per 5 s reply, Whisper `small` ≈ 1.1 s, `large-v3-turbo` ≈ 2.5 s; expect 2–4× slower on the server's 4 Ampere cores.
 
 ## Not done yet (ideas, only on request)
 
 - PostgreSQL for prod, real user accounts (instead of one shared access key)
+- A mobile app (React Native/Expo or a PWA) on top of the same API
 - Sentence-by-sentence TTS while the reply streams
 - Prompt caching
 - Retry after a failed tutor turn
