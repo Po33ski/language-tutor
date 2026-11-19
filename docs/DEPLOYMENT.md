@@ -48,12 +48,14 @@ Each workflow runs only when its part of the repo changed (`backend/` + `deploy/
    - If you get "Out of capacity", try another availability domain or try again later.
 3. **Open ports 80 and 443:**
    - Networking → your VCN → Security Lists → Default → **Add Ingress Rules**: source `0.0.0.0/0`, TCP, destination ports `80,443`.
-   - On the VM (Oracle's Ubuntu images block them in iptables too):
+   - On the VM (Oracle's Ubuntu images block them in iptables too). The rules must go *above* the final `REJECT` rule, whose position differs between image builds, so look it up:
 
      ```bash
-     sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
-     sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+     reject=$(sudo iptables -L INPUT --line-numbers | awk '$2 == "REJECT" {print $1; exit}')
+     sudo iptables -I INPUT "$reject" -m state --state NEW -p tcp --dport 443 -j ACCEPT
+     sudo iptables -I INPUT "$reject" -m state --state NEW -p tcp --dport 80 -j ACCEPT
      sudo netfilter-persistent save
+     sudo iptables -L INPUT --line-numbers   # http and https must be listed before REJECT
      ```
 
 ## 2. Prepare the server
@@ -90,7 +92,7 @@ Pick the API hostname. Without your own domain, use sslip.io, which resolves `<i
 cd ~/language-tutor/deploy
 cp .env.example .env
 chmod 600 .env
-nano .env    # API_DOMAIN, ANTHROPIC_API_KEY, ACCESS_KEY (openssl rand -base64 32), CORS_ORIGINS
+nano .env    # API_DOMAIN, ANTHROPIC_API_KEY, ACCESS_KEY (openssl rand -hex 24), CORS_ORIGINS
 ./deploy.sh
 ```
 

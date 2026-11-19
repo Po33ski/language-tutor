@@ -13,7 +13,9 @@ More detail lives in other docs:
 - **Secrets:** API keys go only in `backend/.env`, which is never committed. Never ask the developer to paste a key into chat. Every new setting goes into `.env.example` with its name only.
 - **Git:** commit and push only when the developer asks. Before every push, check that no `.env`, `*.db` or `sk-ant-` string is tracked.
 - **Verify before reporting done:** run the backend and frontend checks (see Commands). For UI changes, also run the app and test the flow in a browser.
-- **Skills:** use `.claude/skills/langgraph` for agent code and `.claude/skills/vercel-react-best-practices` for React/Next code.
+- **Skills:** use `.claude/skills/langgraph` for agent code and `.claude/skills/vercel-react-best-practices` for React/Next code (both in the repo, pinned in `skills-lock.json`). For CI/CD work (`.github/workflows/`, `deploy/`, `backend/Dockerfile`) use the `building-cicd-pipelines` skill.
+  - `building-cicd-pipelines` is installed globally on the developer's machine (`~/.claude/skills/`), not in the repo: `npx skills add jeremylongshore/claude-code-plugins-plus-skills --skill building-cicd-pipelines --agent claude-code --copy --global`.
+  - It is generic (it suggests staging, registries, Slack and so on). The settled design in `docs/DEPLOYMENT.md` wins: no staging, images built on the VM, no registry, deploy only from `main` after the checks pass.
 
 ## Product decisions (settled; do not re-ask)
 
