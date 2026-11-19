@@ -71,16 +71,22 @@ class RateLimiter:
             del self._hits[client]
 
 
-def rate_limit(request: Request) -> None:
-    """Limit endpoints that cost money (LLM calls) or a lot of CPU (speech models)."""
-    limiter: RateLimiter | None = request.app.state.rate_limiter
-    if limiter is None:
-        return
-    # Behind the reverse proxy, uvicorn's --proxy-headers puts the real client IP here.
-    client = request.client.host if request.client else "unknown"
-    if not limiter.allow(client):
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            "Too many requests. Wait a minute and try again.",
-            headers={"Retry-After": "60"},
-        )
+def rate_limited(group: str) -> Callable[[Request], None]:
+    """A dependency limiting one group of endpoints that cost money (LLM calls) or a lot
+    of CPU (speech models). Each group has its own budget per client, so reading a reply
+    aloud sentence by sentence does not use up the budget for tutor turns."""
+
+    def dependency(request: Request) -> None:
+        limiter: RateLimiter | None = request.app.state.rate_limiter
+        if limiter is None:
+            return
+        # Behind the reverse proxy, uvicorn's --proxy-headers puts the real client IP here.
+        client = request.client.host if request.client else "unknown"
+        if not limiter.allow(f"{group}:{client}"):
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Too many requests. Wait a minute and try again.",
+                headers={"Retry-After": "60"},
+            )
+
+    return dependency

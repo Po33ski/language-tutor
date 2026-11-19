@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -33,6 +34,11 @@ class Settings(BaseSettings):
 
     # Speech (local models, downloaded from Hugging Face on first use).
     speech_enabled: bool = True
+    # Speech to text: "local" (Whisper in this process) or "groq" (Whisper hosted by Groq;
+    # local Whisper stays the fallback when a Groq request fails).
+    stt_provider: Literal["local", "groq"] = "local"
+    groq_api_key: str = ""
+    groq_stt_model: str = "whisper-large-v3-turbo"
     whisper_model: str = "large-v3-turbo"
     whisper_device: str = "auto"  # "auto" | "cuda" | "cpu"
     # Kokoro voice; the first letter is the accent: "a" = American, "b" = British.

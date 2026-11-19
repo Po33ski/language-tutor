@@ -17,7 +17,7 @@ from app.agent.transcript import (
 )
 from app.agent.wrapup import end_lesson
 from app.api.deps import LessonLocksDep, SettingsDep, StoreDep, SummarizerDep, TutorDep
-from app.api.security import rate_limit
+from app.api.security import rate_limited
 from app.config import Settings
 from app.storage import memory
 from app.storage.memory import Lesson
@@ -101,7 +101,7 @@ async def _initial_state(store: StoreDep, settings: Settings, lesson: Lesson) ->
     }
 
 
-@router.post("/{lesson_id}/end", dependencies=[Depends(rate_limit)])
+@router.post("/{lesson_id}/end", dependencies=[Depends(rate_limited("tutor"))])
 async def end_lesson_endpoint(
     lesson_id: str,
     store: StoreDep,
@@ -128,7 +128,7 @@ async def end_lesson_endpoint(
 
 @router.post(
     "/{lesson_id}/messages",
-    dependencies=[Depends(rate_limit)],
+    dependencies=[Depends(rate_limited("tutor"))],
     response_class=StreamingResponse,
     responses={200: {"content": {"text/event-stream": {}}}},
 )

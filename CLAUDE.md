@@ -49,8 +49,8 @@ More detail lives in other docs:
 |---|---|---|---|
 | Tutor (each lesson turn) | Claude Haiku 5.5, `anthropic:claude-haiku-5-5` | Anthropic API | `LLM_MODEL`, `TUTOR_EFFORT=low` (fast replies; an eval of 15 sentences showed `low` corrects well) |
 | Lesson summary + progress profile | Claude Haiku 5.5 | Anthropic API | `SUMMARY_EFFORT=medium`; ≈ 10 s and ≈ $0.003 per lesson |
-| Speech to text | Whisper `large-v3-turbo` locally, `small` on the server (faster-whisper / CTranslate2) | local GPU, float16; server CPU, int8 | `WHISPER_MODEL`, `WHISPER_DEVICE=auto` (`cpu` in the image) |
-| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV | local GPU; server CPU | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British) |
+| Speech to text | Whisper `large-v3-turbo`: locally with faster-whisper / CTranslate2, on the server hosted by Groq (local `small` as fallback) | local GPU, float16; server: Groq API, fallback CPU int8 | `STT_PROVIDER` (`local` / `groq`), `GROQ_API_KEY`, `GROQ_STT_MODEL`, `WHISPER_MODEL`, `WHISPER_DEVICE=auto` (`cpu` in the image) |
+| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV, one request per sentence | local GPU; server CPU (≈ 1 s per sentence) | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British) |
 
 - The LLM is created with `init_chat_model("provider:model")`, so the provider can change through configuration alone. Haiku was chosen for cost; it may be replaced later.
 - The speech models download from Hugging Face on first run (≈ 2 GB). They load in a background task at startup. Calls block, so they run through `asyncio.to_thread`.
@@ -62,7 +62,7 @@ More detail lives in other docs:
 | `main.py` | `create_app(settings, model, summarizer, speech_service)`. The lifespan opens persistence, builds the tutor and summarizer, creates per-lesson locks and starts the background tasks (end stale lessons, warm up speech). Tests inject fakes through its parameters. |
 | `config.py` | `Settings` + `get_settings()`. Data lives in `data/checkpoints.db` and `data/memory.db`. |
 | `api/deps.py` | FastAPI `Depends` aliases: `SettingsDep`, `StoreDep`, `TutorDep`, `SummarizerDep`, `SpeechDep` (503 when speech is disabled), `LessonLocksDep`. Endpoints never build resources themselves. |
-| `api/security.py` | `require_access_key` (Bearer `ACCESS_KEY`, applied to every router but health in `main.py`) and the in-memory per-IP `RateLimiter` / `rate_limit` dependency (on `/messages`, `/end`, speech) |
+| `api/security.py` | `require_access_key` (Bearer `ACCESS_KEY`, applied to every router but health in `main.py`) and the in-memory per-IP `RateLimiter`. `rate_limited(group)` gives each group its own budget: `tutor` (`/messages`, `/end`), `transcribe`, `synthesize` |
 | `api/{health,auth,profiles,lessons,speech}.py` | Routers, all under the `/api` prefix. `lessons.py` holds the SSE turn endpoint and `_initial_state`, which copies long-term memory into a new lesson. |
 | `agent/graph.py` | `build_model`, `build_tutor_agent` (`create_agent` + middleware `tutor_prompt` and `end_turn_if_already_replied`) |
 | `agent/state.py` | `TutorState(AgentState)`: `user_id`, `profile`, `topic`, `progress`, `previous_summaries`, plus append-only `mistakes` and `vocabulary` lists. `Mistake` and `VocabularyItem` are TypedDicts. |
@@ -73,7 +73,7 @@ More detail lives in other docs:
 | `agent/wrapup.py` | `end_lesson` (idempotent; discards a lesson with no learner messages) and `end_stale_lessons` |
 | `storage/memory.py` | All long-term memory models and store access: profiles, lessons, progress |
 | `storage/persistence.py` | `open_persistence(settings)` yields the checkpointer and the store |
-| `speech/` | `stt.py` (`WhisperTranscriber`), `tts.py` (`KokoroSynthesizer`), `service.py` (`SpeechService` protocol, `LocalSpeechService`), `cuda.py` (CUDA 12 preload) |
+| `speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`), `service.py` (`SpeechService` protocol, `DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro), `cuda.py` (CUDA 12 preload) |
 
 ### Memory
 
@@ -145,7 +145,8 @@ More detail lives in other docs:
 | `components/home/`, `components/onboarding/` | Home screen and onboarding form |
 | `components/lesson/` | `lesson-view` (orchestrates a lesson), `message-list` (bubbles + replay), `message-composer` (textarea, Speak/Stop, Send), `feedback-panel` (corrections + vocabulary), `lesson-summary-card` |
 | `components/backend-status.tsx` | The "Backend online" indicator |
-| `hooks/use-recorder.ts`, `hooks/use-speaker.ts` | Mic recording; TTS playback with a generation counter, so stale audio never plays |
+| `hooks/use-recorder.ts`, `hooks/use-speaker.ts` | Mic recording; TTS playback. `useSpeaker` reads text sentence by sentence (`startStream().push/finish` while a reply streams, `speak` for replay): synthesis requests run one at a time in order, playback follows through one reused `<audio>` element, and a generation counter drops cancelled work |
+| `lib/sentences.ts` | `takeSentences` (split finished sentences off streamed text; skips short fragments and abbreviations like "Mr.") and `splitSentences` |
 | `lib/api/client.ts` | The `api` object (REST calls), `streamTutorTurn` (SSE parser), `ApiError` |
 | `lib/stored-value.ts` | `createStoredValue(key)`: localStorage plus `useSyncExternalStore`. Used by `current-user.ts`, `voice-settings.ts` and `access-key.ts`. |
 | `components/access-gate.tsx`, `lib/access-key.ts` | Wraps the app in `layout.tsx`: calls `GET /api/auth/check`, asks for the access key on 401 and stores it. Any later 401 clears the key, so the gate asks again. |
@@ -181,7 +182,7 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
 | Backend | https://92-5-78-54.sslip.io (Caddy → backend container). `GET /api/health` is public; everything else needs the access key. |
 | Server | Oracle Cloud Always Free, `VM.Standard.A1.Flex` (ARM, 4 OCPU, 12 GB, 100 GB disk), Ubuntu 24.04 aarch64, IP `92.5.78.54`, user `ubuntu`. Network: VCN `tutor-vcn`, public subnet; ports 80/443 open in its *Default Security List* and in iptables. |
 | Code on the server | `~/language-tutor`, a clone over a read-only deploy key (`~/.ssh/github_deploy`). CI checks out the deployed commit detached. |
-| Server secrets | `~/language-tutor/deploy/.env` (mode 600): `API_DOMAIN`, `ANTHROPIC_API_KEY`, `ACCESS_KEY`, `CORS_ORIGINS=["https://language-tutor-sigma.vercel.app"]`, `WHISPER_MODEL=small`. Never print it or read secrets from it into the chat. |
+| Server secrets | `~/language-tutor/deploy/.env` (mode 600): `API_DOMAIN`, `ANTHROPIC_API_KEY`, `ACCESS_KEY`, `CORS_ORIGINS=["https://language-tutor-sigma.vercel.app"]`, `STT_PROVIDER=groq`, `GROQ_API_KEY`, `WHISPER_MODEL=small` (fallback). Never print it or read secrets from it into the chat. |
 | Data | Docker volumes `tutor-data` (SQLite) and `tutor-models` (HF cache); `caddy-data` holds the TLS certificate (Let's Encrypt, auto-renewed). |
 | GitHub Actions | Secrets `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_HOST`, `SSH_USER`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`; variable `API_URL`. Vercel env: `NEXT_PUBLIC_API_URL` (production). |
 
@@ -197,6 +198,7 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
   - iptables: the `REJECT` rule is at a different position on different image builds; insert the HTTP/HTTPS rules above it (see `docs/DEPLOYMENT.md`).
   - Free Oracle accounts reclaim instances idle (CPU, network and memory all < 20%) for 7 days; 12 GB RAM keeps memory use above that with the speech models loaded.
   - `astral-sh/setup-uv` has no floating major tag: pin a full version (`v10.3.3`).
+  - Groq detects the audio format from the upload's file name; `groq_stt.upload_filename` names it after the magic bytes (WebM from Chrome/Android, MP4 from Safari/iOS).
 
 ## Environment
 
@@ -207,7 +209,6 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
 
 - PostgreSQL for prod, real user accounts (instead of one shared access key)
 - A mobile app (React Native/Expo or a PWA) on top of the same API
-- Sentence-by-sentence TTS while the reply streams
 - Prompt caching
 - Retry after a failed tutor turn
 - Profile edit/delete

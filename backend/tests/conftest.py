@@ -65,6 +65,9 @@ class FakeSpeech:
     async def warm_up(self) -> None:
         pass
 
+    async def close(self) -> None:
+        pass
+
 
 def mistake_call(original: str, corrected: str, explanation: str) -> AIMessage:
     args = {"original": original, "corrected": corrected, "explanation": explanation}

@@ -16,7 +16,7 @@ from app.agent.wrapup import end_stale_lessons
 from app.api import auth, health, lessons, profiles, speech
 from app.api.security import RateLimiter, require_access_key
 from app.config import Settings, get_settings
-from app.speech.service import LocalSpeechService, SpeechService
+from app.speech.service import DefaultSpeechService, SpeechService
 from app.storage.persistence import open_persistence
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def create_app(
             if not settings.access_key:
                 logger.warning("ACCESS_KEY is not set: anyone who can reach the API can use it")
             app.state.speech = speech_service or (
-                LocalSpeechService(settings) if settings.speech_enabled else None
+                DefaultSpeechService(settings) if settings.speech_enabled else None
             )
             # Background jobs, so startup is not delayed: summarize lessons left open last
             # time, and load the speech models.
@@ -65,6 +65,8 @@ def create_app(
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+            if app.state.speech is not None:
+                await app.state.speech.close()
 
     app = FastAPI(title="Language Tutor API", lifespan=lifespan)
     app.add_middleware(

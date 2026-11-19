@@ -18,6 +18,7 @@ import {
   type Mistake,
   type VocabularyItem,
 } from "@/lib/api/client";
+import { takeSentences } from "@/lib/sentences";
 import { setVoiceEnabled, useVoiceEnabled } from "@/lib/voice-settings";
 
 // Lessons whose opening turn was already requested in this page session. Module-level so
@@ -34,7 +35,7 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
   const [error, setError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
   const voiceEnabled = useVoiceEnabled();
-  const { speak, stop: stopSpeaking, speakingText } = useSpeaker();
+  const { speak, startStream, stop: stopSpeaking, speakingText } = useSpeaker();
 
   // Read through a ref so toggling the voice does not recreate `runTurn` (which would
   // re-run the lesson loading effect).
@@ -48,26 +49,35 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
       setError(null);
       setDraft("");
       let reply = "";
-      let completed = false;
+      // Read the reply aloud while it streams: each finished sentence is queued at once.
+      const voice = voiceEnabledRef.current ? startStream() : null;
+      let unspoken = "";
       try {
         await streamTutorTurn(lessonId, content, {
           onToken: (text) => {
             reply += text;
             setDraft(reply);
+            if (voice) {
+              const { sentences, rest } = takeSentences(unspoken + text);
+              sentences.forEach(voice.push);
+              unspoken = rest;
+            }
           },
           onMistake: (mistake) => setMistakes((previous) => [...previous, mistake]),
           onVocabulary: (item) => setVocabulary((previous) => [...previous, item]),
         });
-        completed = true;
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : "The tutor could not answer.");
       } finally {
         if (reply) setMessages((previous) => [...previous, { role: "assistant", content: reply }]);
         setDraft(null);
-        if (completed && reply && voiceEnabledRef.current) void speak(reply);
+        if (voice) {
+          voice.push(unspoken);
+          voice.finish(reply);
+        }
       }
     },
-    [lessonId, speak],
+    [lessonId, startStream],
   );
 
   useEffect(() => {
