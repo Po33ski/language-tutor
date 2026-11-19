@@ -32,10 +32,10 @@ Each workflow runs only when its part of the repo changed (`backend/` + `deploy/
 
 ## Security model
 
-- **Access key:** the backend requires `Authorization: Bearer <ACCESS_KEY>` on every endpoint except `GET /api/health`. The frontend asks for the key once and keeps it in `localStorage`. The key is not part of the frontend bundle, so the public site is useless without it.
-- **Rate limit:** `RATE_LIMIT_PER_MINUTE` (default 30) per client IP on the endpoints that call the LLM or the speech models.
+- **Accounts:** anyone can sign up (email + password); every endpoint except health, signup and login needs a session token. Passwords are Argon2id hashes; sessions are stored as SHA-256 hashes in `users.db`. Details: [ARCHITECTURE.md](ARCHITECTURE.md#accounts-and-authentication).
+- **Cost limits** (because signup is open): tutor turns and transcriptions per account per day, tutor turns for the whole app per day, signups per network per hour (`USER_DAILY_*`, `DAILY_TUTOR_TURNS_TOTAL`, `SIGNUPS_PER_IP_PER_HOUR` in `deploy/.env`), plus `RATE_LIMIT_PER_MINUTE` per IP.
 - **Spend limit:** set a monthly limit in the Anthropic console as the last line of defence.
-- **Secrets:** the Anthropic key and the access key live only in `deploy/.env` on the server. GitHub stores only the SSH key and the Vercel token.
+- **Secrets:** the Anthropic and Groq keys live only in `deploy/.env` on the server. GitHub stores only the SSH key and the Vercel token.
 
 ## 1. Create the Oracle Cloud VM
 
@@ -92,7 +92,7 @@ Pick the API hostname. Without your own domain, use sslip.io, which resolves `<i
 cd ~/language-tutor/deploy
 cp .env.example .env
 chmod 600 .env
-nano .env    # API_DOMAIN, ANTHROPIC_API_KEY, ACCESS_KEY (openssl rand -hex 24), GROQ_API_KEY, CORS_ORIGINS
+nano .env    # API_DOMAIN, ANTHROPIC_API_KEY, GROQ_API_KEY, CORS_ORIGINS
 ./deploy.sh
 ```
 
@@ -158,7 +158,7 @@ crontab -e
 
 Backups are kept for 14 days in `~/backups`. They live on the same VM, so copy them elsewhere from time to time (`scp ubuntu@<public-ip>:backups/*.tar.gz .`), or sync them to Oracle Object Storage (20 GB free) with `rclone`.
 
-To restore: stop the backend (`docker compose stop backend`), copy `checkpoints.db` and `memory.db` from the archive into the `tutor-data` volume (`docker compose cp <file> backend:/data/`), then start it again.
+To restore: stop the backend (`docker compose stop backend`), copy `checkpoints.db`, `memory.db` and `users.db` from the archive into the `tutor-data` volume (`docker compose cp <file> backend:/data/`), then start it again.
 
 ## Everyday use
 
@@ -169,7 +169,19 @@ To restore: stop the backend (`docker compose stop backend`), copy `checkpoints.
 | Roll back | `git revert <commit>` and push. Faster, for the backend: `ssh` in, `git checkout --detach <good-sha>`, `deploy/deploy.sh`. |
 | Logs | `ssh ubuntu@<public-ip>`, then `cd ~/language-tutor/deploy && docker compose logs -f backend` |
 | Change settings | Edit `deploy/.env` on the server, then `docker compose up -d` |
-| Rotate the access key | Change `ACCESS_KEY`, `docker compose up -d`; every device asks for the new key |
+| Account admin | See [Accounts](#accounts) below |
+
+## Accounts
+
+Admin commands run inside the backend container (in `~/language-tutor/deploy`); they work while the backend is running:
+
+| Task | Command |
+|---|---|
+| List accounts | `docker compose exec backend python -m app.auth.cli list-users` |
+| Forgotten password | `docker compose exec backend python -m app.auth.cli reset-password EMAIL` prints a temporary password and signs out every session; the user changes it under *Account* |
+| Keep data from before accounts | After signing up, `docker compose exec backend python -m app.auth.cli claim-profile EMAIL` links the most recently used old profile (with its lessons and progress) to that account. It lists the unclaimed profiles; pick another with `--profile-id ID`, and use `--force` if the account already filled in its own profile |
+
+There is no email sending yet: no address verification, no reset links.
 
 ## Notes
 

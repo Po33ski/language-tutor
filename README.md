@@ -40,7 +40,7 @@ cd frontend && npm run lint && npx tsc --noEmit
 
 ## Backend API
 
-The backend exposes **13 endpoints** in 5 groups (routers), all under the `/api` prefix. Request and response shapes are defined by **Pydantic models**; FastAPI uses them to validate data and to generate the API docs. Interactive docs, where every endpoint can be called by hand, are at **http://localhost:8000/docs**.
+The backend exposes **16 endpoints** in 5 groups (routers), all under the `/api` prefix. Request and response shapes are defined by **Pydantic models**; FastAPI uses them to validate data and to generate the API docs. Interactive docs, where every endpoint can be called by hand, are at **http://localhost:8000/docs**.
 
 ### Endpoints
 
@@ -50,29 +50,34 @@ The backend exposes **13 endpoints** in 5 groups (routers), all under the `/api`
 |---|---|
 | `GET /api/health` | Checks that the backend is alive and returns `{"status": "ok"}`. Used by the "Backend online" indicator. |
 
-Every endpoint except health requires `Authorization: Bearer <ACCESS_KEY>` when `ACCESS_KEY` is set (always on a public server). Without it, for local development, the API is open.
+Every endpoint except health, signup and login requires a session: `Authorization: Bearer <token>`, with the token from signup or login. Profiles and lessons are always the signed-in account's own; someone else's lesson answers 404.
 
 #### 2. Auth: [`auth.py`](backend/app/api/auth.py)
 
-| Endpoint | What it does |
-|---|---|
-| `GET /api/auth/check` | Returns 204 when the request may use the API (valid access key, or none configured) and 401 otherwise. The frontend calls it to decide whether to ask for the key. |
+| Endpoint | Request | Response | What it does |
+|---|---|---|---|
+| `POST /api/auth/signup` | `Credentials` | `AuthResponse` (201) | Creates an account and signs in. Password: at least 15 characters, not breached, not containing the email (NIST SP 800-63B-4). 409 if the email is taken. |
+| `POST /api/auth/login` | `Credentials` | `AuthResponse` | Signs in. Wrong email and wrong password give the same 401, so it does not reveal which emails have accounts. |
+| `POST /api/auth/logout` | – | 204 | Ends this session. |
+| `GET /api/auth/me` | – | `Account` | The signed-in account; `has_profile` says whether onboarding is done. |
+| `POST /api/auth/password` | `PasswordChange` | 204 | Changes the password (403 if the current one is wrong) and signs out every other session. |
 
-#### 3. Profiles: [`profiles.py`](backend/app/api/profiles.py)
+#### 3. Profile: [`profiles.py`](backend/app/api/profiles.py)
+
+One learner profile per account.
 
 | Endpoint | Request | Response | What it does |
 |---|---|---|---|
-| `GET /api/profiles` | – | list of `Profile` | All profiles, for the "Who is learning today?" screen. |
-| `POST /api/profiles` | `ProfileCreate` | `Profile` (201) | Creates a profile from the onboarding form. |
-| `GET /api/profiles/{user_id}` | – | `Profile` | One profile (404 if it does not exist). |
-| `GET /api/profiles/{user_id}/progress` | – | `Progress` or `null` | The progress profile for the "Your progress" card; `null` until the first lesson is summarized. |
+| `GET /api/profile` | – | `Profile` | The account's profile; 404 until onboarding is done. |
+| `POST /api/profile` | `ProfileCreate` | `Profile` (201) | Creates it from the onboarding form; 409 if it exists. |
+| `GET /api/profile/progress` | – | `Progress` or `null` | The progress profile for the "Your progress" card; `null` until the first lesson is summarized. |
 
 #### 4. Lessons: [`lessons.py`](backend/app/api/lessons.py)
 
 | Endpoint | Request | Response | What it does |
 |---|---|---|---|
 | `POST /api/lessons` | `LessonCreate` | `Lesson` (201) | Creates a lesson. Without a topic, the profile's main topic is used. |
-| `GET /api/lessons?user_id=…` | query parameter | list of `Lesson` | A user's lessons, newest first. |
+| `GET /api/lessons` | – | list of `Lesson` | The account's lessons, newest first. |
 | `GET /api/lessons/{lesson_id}` | – | `LessonDetail` | Full lesson state (conversation, corrections, vocabulary), used when a lesson page is opened or reloaded. |
 | `POST /api/lessons/{lesson_id}/messages` | `SendMessageRequest` | **SSE stream** | One conversation turn with the tutor. |
 | `POST /api/lessons/{lesson_id}/end` | – | `Lesson` | Ends the lesson: writes the summary and updates the progress profile. Safe to call twice. |
@@ -100,16 +105,26 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 
 | Code | When |
 |---|---|
-| **401** | Missing or wrong access key. |
+| **401** | Not signed in (no, unknown or expired session), or wrong email/password at login. |
+| **403** | Wrong current password when changing it. |
 | **404** | The profile or lesson does not exist. |
 | **409** | The lesson has already ended, or the tutor is still answering (one turn at a time per lesson). |
 | **422** | Invalid input, e.g. an empty message or an empty recording. |
 | **413** | The recording is larger than 10 MB. |
-| **429** | Rate limit hit (`RATE_LIMIT_PER_MINUTE` per client IP, counted separately for tutor turns (`/messages` + `/end`), `/speech/transcribe` and `/speech/synthesize`). |
+| **429** | Daily limit reached (per account or for the whole app), too many signups from one network or failed logins, or a rate limit hit (`RATE_LIMIT_PER_MINUTE` per client IP, counted separately for tutor turns (`/messages` + `/end`), `/speech/transcribe` and `/speech/synthesize`). |
 | **502** | The lesson summary could not be generated; the lesson stays open and can be ended again. |
 | **503** | Speech is disabled (`SPEECH_ENABLED=false`). |
 
 ### Data models (Pydantic)
+
+#### Accounts: [`auth.py`](backend/app/api/auth.py)
+
+| Model | Fields |
+|---|---|
+| `Credentials` | `email` (validated, stored lowercase), `password` |
+| `AuthResponse` | `token` (the session token; send it as `Authorization: Bearer <token>`), `account` |
+| `Account` | `id`, `email`, `created_at`, `has_profile` |
+| `PasswordChange` | `current_password`, `new_password` |
 
 #### Profile: [`memory.py`](backend/app/storage/memory.py)
 
@@ -125,7 +140,7 @@ The "*Create* model + full model" pattern is common: the client sends only what 
 
 | Model | Fields |
 |---|---|
-| `LessonCreate` | `user_id`, `topic` (optional) |
+| `LessonCreate` | `topic` (optional); the lesson belongs to the signed-in account |
 | `Lesson` | `id`, `user_id`, `topic`, `status`, `created_at`, `ended_at`, `summary` |
 | `LessonStatus` | `active` (in progress), `summarized` (ended with a summary), `discarded` (ended before the learner wrote anything) |
 | `LessonSummary` | `summary` (2–3 sentences), `practiced`, `recurring_mistakes`, `vocabulary`, `next_steps` |
@@ -167,6 +182,8 @@ These two are `TypedDict`s rather than Pydantic classes, because they are part o
 - **Where data is stored:**
   - Profiles, lessons and progress are long-term memory, in `backend/data/memory.db` (LangGraph Store).
   - Conversation content is short-term memory, in `backend/data/checkpoints.db` (LangGraph checkpointer).
+  - Accounts, sessions (only token hashes) and daily usage counters are in a separate `backend/data/users.db`.
+- **Admin commands** (reset a password, link a profile from before accounts existed): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#accounts).
 - **Shared dependencies:** endpoints do not create the database, the agent or the speech models themselves. They receive them through FastAPI's `Depends` (see [`deps.py`](backend/app/api/deps.py)), which lets tests swap in fake models without calling paid APIs.
 - **Frontend types:** the frontend does not define these models by hand. `npm run gen:api` generates TypeScript types from the backend's OpenAPI schema, so both sides always match.
 
@@ -185,6 +202,10 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `GROQ_API_KEY` / `GROQ_STT_MODEL` | – / `whisper-large-v3-turbo` | Groq API key ([console.groq.com](https://console.groq.com/keys)) and model, used when `STT_PROVIDER=groq`. |
 | `WHISPER_MODEL` / `WHISPER_DEVICE` | `large-v3-turbo` / `auto` | Local speech-to-text model and device (`auto`, `cuda`, `cpu`). |
 | `TTS_VOICE` | `af_heart` | Kokoro voice; the first letter is the accent (`a` = American, `b` = British). |
-| `ACCESS_KEY` | empty | Shared secret required as `Authorization: Bearer <key>`. Empty disables auth (local only). |
+| `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | `30` / `90` | A session ends after this many idle days, and after the maximum in any case. |
+| `PASSWORD_BREACH_CHECK` | `true` | Reject passwords known from breaches (Have I Been Pwned; only 5 characters of the SHA-1 hash leave the server). |
+| `USER_DAILY_TUTOR_TURNS` / `DAILY_TUTOR_TURNS_TOTAL` | `200` / `2000` | Tutor turns per account and for the whole app per UTC day; `0` = unlimited. |
+| `USER_DAILY_TRANSCRIPTIONS` | `200` | Speech-to-text requests per account per day. |
+| `SIGNUPS_PER_IP_PER_HOUR` | `5` | New accounts per network per hour. |
 | `RATE_LIMIT_PER_MINUTE` | `30` | Requests per minute per client IP, for each group: tutor turns, transcription, synthesis; `0` = unlimited. |
 | `CORS_ORIGINS` / `CORS_ORIGIN_REGEX` | `["http://localhost:3000"]` / none | Origins allowed to call the API from a browser. |

@@ -5,7 +5,9 @@ description = "Backend for the Language Tutor app (FastAPI + LangGraph)."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiosqlite>=0.22.1",
     "av>=14,<16",
+    "email-validator>=2.4.0",
     "en-core-web-sm",
     "fastapi>=0.162.0",
     "faster-whisper>=1.2.1",
@@ -15,6 +17,7 @@ dependencies = [
     "langchain-anthropic>=1.7.7",
     "langgraph>=1.2.18",
     "langgraph-checkpoint-sqlite>=3.1.2",
+    "pwdlib[argon2]>=0.4.2",
     "pydantic-settings>=2.16.2",
     "python-multipart>=0.0.34",
     "soundfile>=0.14.0",

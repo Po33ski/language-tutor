@@ -25,12 +25,23 @@ class Settings(BaseSettings):
     # Optional regex for more allowed origins, e.g. Vercel preview deployments.
     cors_origin_regex: str | None = None
 
-    # Shared secret that clients send as "Authorization: Bearer <key>". Empty = no auth,
-    # for local development only: always set it when the backend is reachable online.
-    access_key: str = ""
     # Requests per minute per client IP to the endpoints that call the LLM or the speech
     # models. 0 = unlimited.
     rate_limit_per_minute: int = 30
+
+    # Accounts. Sessions expire after this many idle days, and after the absolute maximum
+    # even when used every day (then the user signs in again).
+    session_idle_days: int = 30
+    session_max_days: int = 90
+    # Reject passwords found in known data breaches (Have I Been Pwned, k-anonymity API:
+    # only the first 5 characters of the password's SHA-1 hash leave the server).
+    password_breach_check: bool = True
+    # New accounts per client IP per hour (signup is open to anyone).
+    signups_per_ip_per_hour: int = 5
+    # Daily cost limits, because anyone can sign up. 0 = unlimited.
+    user_daily_tutor_turns: int = 200
+    daily_tutor_turns_total: int = 2000
+    user_daily_transcriptions: int = 200
 
     # Speech (local models, downloaded from Hugging Face on first use).
     speech_enabled: bool = True
@@ -51,6 +62,11 @@ class Settings(BaseSettings):
     @property
     def memory_db_path(self) -> Path:
         return self.data_dir / "memory.db"
+
+    @property
+    def users_db_path(self) -> Path:
+        """Accounts, sessions and usage counters, kept apart from the learning data."""
+        return self.data_dir / "users.db"
 
 
 @lru_cache

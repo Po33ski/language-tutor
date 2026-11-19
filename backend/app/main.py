@@ -6,7 +6,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
-from fastapi import Depends, FastAPI
+import httpx
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.language_models import BaseChatModel
 
@@ -14,7 +15,9 @@ from app.agent.graph import build_model, build_tutor_agent
 from app.agent.summarizer import Summarizer, build_summarizer
 from app.agent.wrapup import end_stale_lessons
 from app.api import auth, health, lessons, profiles, speech
-from app.api.security import RateLimiter, require_access_key
+from app.api.auth import AuthLimiters
+from app.api.security import RateLimiter
+from app.auth.store import UserStore
 from app.config import Settings, get_settings
 from app.speech.service import DefaultSpeechService, SpeechService
 from app.storage.persistence import open_persistence
@@ -33,7 +36,19 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        async with open_persistence(settings) as persistence:
+        async with (
+            open_persistence(settings) as persistence,
+            UserStore.open(
+                settings.users_db_path,
+                session_idle=timedelta(days=settings.session_idle_days),
+                session_max=timedelta(days=settings.session_max_days),
+            ) as users,
+            httpx.AsyncClient() as http,
+        ):
+            await users.purge()
+            app.state.users = users
+            app.state.http = http
+            app.state.auth_limiters = AuthLimiters.from_settings(settings)
             app.state.settings = settings
             app.state.persistence = persistence
             app.state.tutor = build_tutor_agent(
@@ -46,8 +61,6 @@ def create_app(
                 if settings.rate_limit_per_minute > 0
                 else None
             )
-            if not settings.access_key:
-                logger.warning("ACCESS_KEY is not set: anyone who can reach the API can use it")
             app.state.speech = speech_service or (
                 DefaultSpeechService(settings) if settings.speech_enabled else None
             )
@@ -76,10 +89,10 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # Health stays public for uptime checks; everything else needs the access key.
-    app.include_router(health.router, prefix="/api")
-    for router in (auth.router, profiles.router, lessons.router, speech.router):
-        app.include_router(router, prefix="/api", dependencies=[Depends(require_access_key)])
+    # Health, signup and login are public; every other endpoint requires a session
+    # (each one depends on the signed-in user).
+    for router in (health.router, auth.router, profiles.router, lessons.router, speech.router):
+        app.include_router(router, prefix="/api")
     return app
 
 

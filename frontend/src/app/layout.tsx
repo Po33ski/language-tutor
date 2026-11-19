@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { AccessGate } from "@/components/access-gate";
+import { AuthGate } from "@/components/auth/auth-gate";
 
 import "./globals.css";
 
@@ -26,7 +26,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <AccessGate>{children}</AccessGate>
+        <AuthGate>{children}</AuthGate>
       </body>
     </html>
   );

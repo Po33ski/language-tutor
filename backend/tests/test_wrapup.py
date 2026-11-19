@@ -30,7 +30,7 @@ def test_end_lesson_saves_summary_and_progress(make_client, profile_payload, sum
     assert "Learner: I am work as developer" in transcript
     assert "START_LESSON" not in transcript
 
-    progress = client.get(f"/api/profiles/{lesson['user_id']}/progress").json()
+    progress = client.get("/api/profile/progress").json()
     assert progress["text"] == "Progress after 1 lesson(s)."
 
     # Ending again is a no-op, and the ended lesson accepts no more messages.
@@ -44,9 +44,7 @@ def test_progress_builds_on_previous_lessons(make_client, profile_payload, summa
     client = make_client([AIMessage("Hi!"), AIMessage("Good."), AIMessage("Hi!"), AIMessage("Ok.")])
     first = _lesson_with_learner_message(client, profile_payload)
     client.post(f"/api/lessons/{first}/end")
-    user_id = client.get(f"/api/lessons/{first}").json()["lesson"]["user_id"]
-
-    second = client.post("/api/lessons", json={"user_id": user_id}).json()["id"]
+    second = client.post("/api/lessons", json={}).json()["id"]
     _send(client, second, None)
     _send(client, second, "Hello again")
     client.post(f"/api/lessons/{second}/end")

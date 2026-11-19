@@ -4,8 +4,8 @@ from tests.conftest import mistake_call, parse_sse
 
 
 def _start_lesson(client, profile_payload) -> str:
-    user_id = client.post("/api/profiles", json=profile_payload).json()["id"]
-    return client.post("/api/lessons", json={"user_id": user_id}).json()["id"]
+    assert client.post("/api/profile", json=profile_payload).status_code == 201
+    return client.post("/api/lessons", json={}).json()["id"]
 
 
 def _send(client, lesson_id: str, content: str | None) -> list[tuple[str, dict]]:
@@ -18,23 +18,26 @@ def _text(events) -> str:
     return "".join(data["text"] for event, data in events if event == "token")
 
 
-def test_profiles_crud(make_client, profile_payload) -> None:
+def test_profile_is_created_once_per_account(make_client, profile_payload) -> None:
     client = make_client([])
-    created = client.post("/api/profiles", json=profile_payload)
+    assert client.get("/api/profile").status_code == 404
+    assert client.get("/api/auth/me").json()["has_profile"] is False
+    created = client.post("/api/profile", json=profile_payload)
     assert created.status_code == 201
     profile = created.json()
-    assert client.get(f"/api/profiles/{profile['id']}").json() == profile
-    assert client.get("/api/profiles").json() == [profile]
-    assert client.get("/api/profiles/missing").status_code == 404
+    assert client.get("/api/profile").json() == profile
+    assert client.get("/api/auth/me").json()["has_profile"] is True
+    assert client.post("/api/profile", json=profile_payload).status_code == 409
 
 
 def test_lesson_topic_defaults_to_main_topic(make_client, profile_payload) -> None:
     client = make_client([])
-    user_id = client.post("/api/profiles", json=profile_payload).json()["id"]
-    lesson = client.post("/api/lessons", json={"user_id": user_id}).json()
+    assert client.post("/api/lessons", json={}).status_code == 404  # no profile yet
+    client.post("/api/profile", json=profile_payload)
+    lesson = client.post("/api/lessons", json={}).json()
     assert lesson["topic"] == "Job interview preparation"
     assert lesson["status"] == "active"
-    assert client.get("/api/lessons", params={"user_id": user_id}).json() == [lesson]
+    assert client.get("/api/lessons").json() == [lesson]
 
 
 def test_lesson_conversation_with_mistake(make_client, profile_payload) -> None:

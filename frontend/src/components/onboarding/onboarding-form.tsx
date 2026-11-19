@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { buttonPrimary, card, errorText, input } from "@/components/ui";
+import { buttonPrimary, buttonSecondary, card, errorText, input } from "@/components/ui";
+import { useAccount } from "@/components/auth/auth-gate";
 import { api, type EnglishLevel } from "@/lib/api/client";
-import { setCurrentUserId } from "@/lib/current-user";
 
 const LEVELS: { value: EnglishLevel; label: string }[] = [
   { value: "A1", label: "A1 — Beginner" },
@@ -26,6 +27,7 @@ const TOPIC_SUGGESTIONS = [
 
 export function OnboardingForm() {
   const router = useRouter();
+  const { account, refresh } = useAccount();
   const [name, setName] = useState("");
   const [level, setLevel] = useState<EnglishLevel>("B1");
   const [mainTopic, setMainTopic] = useState("");
@@ -39,19 +41,32 @@ export function OnboardingForm() {
     setSaving(true);
     setError(null);
     try {
-      const profile = await api.createProfile({
+      await api.createProfile({
         name: name.trim(),
         level,
         main_topic: mainTopic.trim(),
         goal: goal.trim(),
         preferences: notes.trim() ? { notes: notes.trim() } : {},
       });
-      setCurrentUserId(profile.id);
+      // The home screen reads `has_profile` from the account: update it before going there.
+      await refresh();
       router.push("/");
     } catch {
       setError("Could not save the profile. Try again.");
       setSaving(false);
     }
+  }
+
+  // `saving` stays true after a successful submit, while the page moves home.
+  if (account.has_profile && !saving) {
+    return (
+      <div className={`${card} flex flex-col gap-3 text-sm`}>
+        <p>Your profile is already set up.</p>
+        <Link href="/" className={`${buttonSecondary} self-start`}>
+          Go to your lessons
+        </Link>
+      </div>
+    );
   }
 
   return (

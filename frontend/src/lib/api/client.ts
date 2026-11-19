@@ -1,4 +1,4 @@
-import { readAccessKey, setAccessKey } from "@/lib/access-key";
+import { readSessionToken, setSessionToken } from "@/lib/session";
 
 import type { components } from "./schema";
 
@@ -13,6 +13,8 @@ export type VocabularyItem = Schemas["VocabularyItem"];
 export type EnglishLevel = Schemas["EnglishLevel"];
 export type LessonSummary = Schemas["LessonSummary"];
 export type Progress = Schemas["Progress"];
+export type Account = Schemas["Account"];
+export type AuthResponse = Schemas["AuthResponse"];
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -25,33 +27,16 @@ export class ApiError extends Error {
   }
 }
 
-function bearer(key: string | null): Record<string, string> {
-  return key ? { Authorization: `Bearer ${key}` } : {};
-}
-
-/** `fetch` against the backend, with the access key attached. */
+/** `fetch` against the backend, with the session token attached. */
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const token = readSessionToken();
   const response = await fetch(`${API_URL}/api${path}`, {
     ...init,
-    headers: { ...bearer(readAccessKey()), ...init?.headers },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers },
   });
-  // Forget a rejected key, so the access gate asks for a new one.
-  if (response.status === 401) setAccessKey(null);
+  // The session expired or was ended elsewhere: forget it, so the sign-in screen shows.
+  if (response.status === 401 && token) setSessionToken(null);
   return response;
-}
-
-/**
- * Whether the backend accepts this access key (or needs none). Rejects on network
- * errors. Does not forget a rejected key, so the gate can say it was wrong.
- */
-export async function checkAccess(
-  key: string | null,
-  signal?: AbortSignal,
-): Promise<"granted" | "denied"> {
-  const response = await fetch(`${API_URL}/api/auth/check`, { headers: bearer(key), signal });
-  if (response.status === 401) return "denied";
-  if (!response.ok) throw new ApiError(response.status, response.statusText);
-  return "granted";
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -59,30 +44,62 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
-    throw new ApiError(response.status, detail);
-  }
+  if (!response.ok) throw await errorFrom(response, response.statusText);
   return response.json() as Promise<T>;
+}
+
+/** An ApiError with the backend's message (`detail`) when it sent a readable one. */
+async function errorFrom(response: Response, fallback: string): Promise<ApiError> {
+  const body = await response.json().catch(() => null);
+  const detail = body?.detail;
+  // Validation errors come as a list: [{ msg: "value is not a valid email address: …" }].
+  const message =
+    typeof detail === "string"
+      ? detail
+      : Array.isArray(detail) && typeof detail[0]?.msg === "string"
+        ? detail[0].msg
+        : fallback;
+  return new ApiError(response.status, message);
 }
 
 export const api = {
   getHealth: (signal?: AbortSignal) => request<{ status: string }>("/health", { signal }),
-  listProfiles: () => request<Profile[]>("/profiles"),
-  getProfile: (userId: string) => request<Profile>(`/profiles/${userId}`),
+
+  signUp: (email: string, password: string) =>
+    request<AuthResponse>("/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  signIn: (email: string, password: string) =>
+    request<AuthResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  signOut: async () => {
+    await apiFetch("/auth/logout", { method: "POST" });
+  },
+  getAccount: (signal?: AbortSignal) => request<Account>("/auth/me", { signal }),
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    const response = await apiFetch("/auth/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    if (!response.ok) throw await errorFrom(response, "Could not change the password.");
+  },
+
+  getProfile: () => request<Profile>("/profile"),
   createProfile: (data: ProfileCreate) =>
-    request<Profile>("/profiles", { method: "POST", body: JSON.stringify(data) }),
-  listLessons: (userId: string) =>
-    request<Lesson[]>(`/lessons?user_id=${encodeURIComponent(userId)}`),
-  getProgress: (userId: string) => request<Progress | null>(`/profiles/${userId}/progress`),
+    request<Profile>("/profile", { method: "POST", body: JSON.stringify(data) }),
+  getProgress: () => request<Progress | null>("/profile/progress"),
+  listLessons: () => request<Lesson[]>("/lessons"),
   getLesson: (lessonId: string) => request<LessonDetail>(`/lessons/${lessonId}`),
   endLesson: (lessonId: string) =>
     request<Lesson>(`/lessons/${lessonId}/end`, { method: "POST" }),
-  createLesson: (userId: string, topic?: string) =>
+  createLesson: (topic?: string) =>
     request<Lesson>("/lessons", {
       method: "POST",
-      body: JSON.stringify({ user_id: userId, topic: topic || null }),
+      body: JSON.stringify({ topic: topic || null }),
     }),
 
   /** Speech to text (Whisper). */

@@ -94,17 +94,36 @@ def speech() -> FakeSpeech:
     return FakeSpeech()
 
 
+STRONG_PASSWORD = "correct horse battery staple"
+
+
+def sign_up(client: TestClient, email: str = "anna@example.com") -> dict:
+    """Create an account and send its session token with every later request."""
+    response = client.post("/api/auth/signup", json={"email": email, "password": STRONG_PASSWORD})
+    assert response.status_code == 201, response.text
+    body = response.json()
+    client.headers["Authorization"] = f"Bearer {body['token']}"
+    return body
+
+
 @pytest.fixture
 def make_client(tmp_path, summarizer, speech) -> Iterator:
-    """Factory: a test client whose tutor replays the given AI messages."""
+    """Factory: a test client whose tutor replays the given AI messages, signed in to a
+    fresh account unless `signed_in=False`. The breached-password check (a network call)
+    is off unless a test turns it on."""
     clients = []
 
-    def factory(responses: list[AIMessage], **settings_overrides) -> TestClient:
+    def factory(
+        responses: list[AIMessage], *, signed_in: bool = True, **settings_overrides
+    ) -> TestClient:
+        settings_overrides.setdefault("password_breach_check", False)
         settings = Settings(data_dir=tmp_path, anthropic_api_key="test", **settings_overrides)
         model = FakeTutorModel(messages=iter(responses))
         client = TestClient(create_app(settings, model, summarizer, speech))
         client.__enter__()  # run the lifespan (opens SQLite, builds the agent)
         clients.append(client)
+        if signed_in:
+            sign_up(client)
         return client
 
     yield factory
