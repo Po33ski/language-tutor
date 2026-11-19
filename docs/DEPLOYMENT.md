@@ -92,7 +92,7 @@ Pick the API hostname. Without your own domain, use sslip.io, which resolves `<i
 cd ~/language-tutor/deploy
 cp .env.example .env
 chmod 600 .env
-nano .env    # API_DOMAIN, ANTHROPIC_API_KEY, ACCESS_KEY (openssl rand -hex 24), CORS_ORIGINS
+nano .env    # API_DOMAIN, ANTHROPIC_API_KEY, ACCESS_KEY (openssl rand -hex 24), GROQ_API_KEY, CORS_ORIGINS
 ./deploy.sh
 ```
 
@@ -173,7 +173,9 @@ To restore: stop the backend (`docker compose stop backend`), copy `checkpoints.
 
 ## Notes
 
-- **Speech on CPU:** measured on a desktop CPU, Kokoro needs ≈ 0.6 s for a 5 s reply, Whisper `small` ≈ 1.1 s and `large-v3-turbo` ≈ 2.5 s per answer. Expect roughly 2–4× that on 4 Ampere cores. `small` has not been checked as carefully as `large-v3-turbo` for keeping learner mistakes verbatim; switch `WHISPER_MODEL` if it "fixes" grammar.
+- **Speech speed:** measured on the server (4 Ampere cores), Kokoro needs ≈ 1 s per sentence (≈ 4.7 s for an 8 s reply) and local Whisper `small` ≈ 6 s for an 8 s answer. Hence:
+  - speech to text goes to Groq (`STT_PROVIDER=groq`, ≈ 1 s, free tier: about 2000 requests a day); local Whisper `small` is only the fallback. Without `GROQ_API_KEY` the backend logs an error and uses local Whisper;
+  - replies are read aloud sentence by sentence while they stream, so the voice starts after ≈ 1 s instead of after the whole reply is synthesized.
 - **Branch protection:** the workflows are path-filtered, so do not make their checks *required* in branch protection (a PR that touches only the frontend would wait forever for the backend check).
 - **GitHub Actions minutes:** the private repo gets 2000 free minutes a month; one run takes a few minutes.
 - **SQLite** is fine for a single backend process. Moving to Postgres means swapping in `PostgresSaver` / `PostgresStore` and adding a Postgres service to `compose.yaml`.

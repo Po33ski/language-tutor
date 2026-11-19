@@ -4,7 +4,7 @@ An English-learning app. An AI tutor runs a spoken or written conversation lesso
 
 - **Backend:** Python 3.12, FastAPI, LangGraph + LangChain, Claude Haiku 5.5
 - **Frontend:** Next.js 16, React, TypeScript, Tailwind CSS
-- **Speech (local, GPU):** Whisper `large-v3-turbo` (speech to text), Kokoro-82M (text to speech)
+- **Speech:** Whisper `large-v3-turbo` (speech to text; locally on the GPU, or hosted by Groq), Kokoro-82M (text to speech, self-hosted). Replies are read aloud sentence by sentence while they stream.
 - **Memory:** SQLite. Short-term memory is the LangGraph checkpointer; long-term memory is the LangGraph Store.
 
 Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Deployment (Vercel + Oracle Cloud, CI/CD with GitHub Actions) is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
@@ -93,8 +93,8 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 
 | Endpoint | Request | Response | What it does |
 |---|---|---|---|
-| `POST /api/speech/transcribe` | audio file (`multipart/form-data`, field `audio`) | `TranscriptionResponse` | Microphone recording → text (Whisper). Learner mistakes are kept verbatim. |
-| `POST /api/speech/synthesize` | `SynthesisRequest` | **WAV** file | Text → the tutor's voice (Kokoro). |
+| `POST /api/speech/transcribe` | audio file (`multipart/form-data`, field `audio`) | `TranscriptionResponse` | Microphone recording → text (Whisper, local or Groq per `STT_PROVIDER`). Learner mistakes are kept verbatim. |
+| `POST /api/speech/synthesize` | `SynthesisRequest` | **WAV** file | Text → the tutor's voice (Kokoro). The frontend calls it once per sentence. |
 
 #### Error codes
 
@@ -105,7 +105,7 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 | **409** | The lesson has already ended, or the tutor is still answering (one turn at a time per lesson). |
 | **422** | Invalid input, e.g. an empty message or an empty recording. |
 | **413** | The recording is larger than 10 MB. |
-| **429** | Rate limit hit on `/messages`, `/end` or a speech endpoint (`RATE_LIMIT_PER_MINUTE` per client IP). |
+| **429** | Rate limit hit (`RATE_LIMIT_PER_MINUTE` per client IP, counted separately for tutor turns (`/messages` + `/end`), `/speech/transcribe` and `/speech/synthesize`). |
 | **502** | The lesson summary could not be generated; the lesson stays open and can be ended again. |
 | **503** | Speech is disabled (`SPEECH_ENABLED=false`). |
 
@@ -161,8 +161,8 @@ These two are `TypedDict`s rather than Pydantic classes, because they are part o
   |---|---|---|
   | `/messages` | Claude Haiku 5.5 | The tutor; `low` effort, for fast replies. |
   | `/end` | Claude Haiku 5.5 | Summaries; `medium` effort. |
-  | `/speech/transcribe` | Whisper `large-v3-turbo` | Runs locally on the GPU. |
-  | `/speech/synthesize` | Kokoro-82M | Runs locally on the GPU. |
+  | `/speech/transcribe` | Whisper `large-v3-turbo` | Locally on the GPU, or hosted by Groq (`STT_PROVIDER=groq`, used on the server) with local Whisper as the fallback. |
+  | `/speech/synthesize` | Kokoro-82M | Self-hosted: GPU locally, CPU on the server. |
 
 - **Where data is stored:**
   - Profiles, lessons and progress are long-term memory, in `backend/data/memory.db` (LangGraph Store).
@@ -181,8 +181,10 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `TUTOR_EFFORT` / `SUMMARY_EFFORT` | `low` / `medium` | Reasoning effort for tutor replies and summaries. |
 | `STALE_LESSON_HOURS` | `6` | Lessons idle for longer are summarized automatically at startup. |
 | `SPEECH_ENABLED` | `true` | Turns the speech endpoints on or off. |
-| `WHISPER_MODEL` / `WHISPER_DEVICE` | `large-v3-turbo` / `auto` | Speech-to-text model and device (`auto`, `cuda`, `cpu`). |
+| `STT_PROVIDER` | `local` | Speech to text: `local` (Whisper in the backend) or `groq` (Groq's hosted Whisper; local Whisper is the fallback). |
+| `GROQ_API_KEY` / `GROQ_STT_MODEL` | – / `whisper-large-v3-turbo` | Groq API key ([console.groq.com](https://console.groq.com/keys)) and model, used when `STT_PROVIDER=groq`. |
+| `WHISPER_MODEL` / `WHISPER_DEVICE` | `large-v3-turbo` / `auto` | Local speech-to-text model and device (`auto`, `cuda`, `cpu`). |
 | `TTS_VOICE` | `af_heart` | Kokoro voice; the first letter is the accent (`a` = American, `b` = British). |
 | `ACCESS_KEY` | empty | Shared secret required as `Authorization: Bearer <key>`. Empty disables auth (local only). |
-| `RATE_LIMIT_PER_MINUTE` | `30` | Requests per minute per client IP to the LLM and speech endpoints; `0` = unlimited. |
+| `RATE_LIMIT_PER_MINUTE` | `30` | Requests per minute per client IP, for each group: tutor turns, transcription, synthesis; `0` = unlimited. |
 | `CORS_ORIGINS` / `CORS_ORIGIN_REGEX` | `["http://localhost:3000"]` / none | Origins allowed to call the API from a browser. |

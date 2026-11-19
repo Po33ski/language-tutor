@@ -59,6 +59,9 @@ def test_speech_is_rate_limited(make_client) -> None:
     assert limited.headers["Retry-After"] == "60"
     # Cheap read endpoints are not limited.
     assert client.get("/api/profiles").status_code == 200
+    # Each endpoint group has its own budget: transcription still works.
+    files = {"audio": ("answer.webm", b"audio", "audio/webm")}
+    assert client.post("/api/speech/transcribe", files=files).status_code == 200
 
 
 def test_rate_limiter_window_slides() -> None:

@@ -26,7 +26,7 @@ English tutor: Next.js frontend, FastAPI backend, LangGraph agent on Claude Haik
 
 - Multiple local profiles, no login. The user picks or creates a profile on start; the selected `user_id` is kept in browser storage.
 - Access control is one shared secret, not user accounts: with `ACCESS_KEY` set, every endpoint except `GET /api/health` needs `Authorization: Bearer <key>` (`app/api/security.py`). The frontend's `AccessGate` calls `GET /api/auth/check`; on 401 it asks for the key, stores it in localStorage and sends it with every request. Any later 401 clears the key, so the gate asks again. Without a key (local dev) the API is open and the gate lets everything through.
-- The LLM and speech endpoints (`/messages`, `/end`, `/speech/*`) are rate-limited per client IP in memory (`RATE_LIMIT_PER_MINUTE`, default 30); fine because the backend is a single process.
+- The LLM and speech endpoints are rate-limited per client IP in memory (`RATE_LIMIT_PER_MINUTE`, default 30), with a separate budget per group: tutor turns (`/messages`, `/end`), `/speech/transcribe`, `/speech/synthesize`. In-memory state is fine because the backend is a single process.
 - Real user accounts can be added later without changing the data model (everything is already keyed by `user_id`).
 
 ## Onboarding questionnaire
@@ -119,17 +119,18 @@ Checkpointer and store use separate SQLite files so their writes never contend f
 ## Voice flow
 
 1. The learner clicks **Speak**; the browser records with MediaRecorder (webm/opus) until **Stop**.
-2. `POST /api/speech/transcribe` (multipart `audio`) → Whisper (`faster-whisper`, `large-v3-turbo`, English, VAD on, no `initial_prompt`) → `{text}`.
+2. `POST /api/speech/transcribe` (multipart `audio`) → Whisper `large-v3-turbo`, English, no prompt → `{text}`. Where it runs depends on `STT_PROVIDER`:
+   - `local`: `faster-whisper` in the backend process (VAD on);
+   - `groq`: Groq's hosted Whisper (`app/speech/groq_stt.py`), ≈ 1 s instead of 4–6 s on the server's CPU. If a Groq request fails, local Whisper (`WHISPER_MODEL`, `small` on the server) transcribes instead. Groq picks the format from the file name, so the upload is named after its magic bytes (`.webm` from Chrome/Android, `.mp4` from Safari/iOS).
 3. The text is sent immediately as a chat message (no confirmation step).
 4. `POST /api/lessons/{id}/messages` → tutor reply streamed via SSE.
-5. When the reply is complete and **Voice on** is set, `POST /api/speech/synthesize` → Kokoro (`af_heart`) → WAV played in the browser. Every tutor message also has a replay button.
+5. With **Voice on**, the reply is read aloud **while it streams**: the frontend splits the streamed text into sentences (`lib/sentences.ts`) and `useSpeaker` sends each finished sentence to `POST /api/speech/synthesize` → Kokoro (`af_heart`) → WAV. Synthesis requests run one at a time, in order, so the server always works on the earliest sentence; playback follows in the same order through one reused `<audio>` element. The first sentence plays about a second after it is written instead of after the whole reply is synthesized. Every tutor message also has a replay button (same sentence pipeline).
 
 - A text input is always available as an alternative to the microphone.
 - Whisper keeps learner mistakes verbatim (tested: "I am work as developer since five years", "she have", "I have went"). An `initial_prompt` made it correct grammar, so none is used.
 - Both models run in the backend process on the GPU (`app/speech/`); blocking calls run in threads, and the models load in a background task at startup (first run downloads them from Hugging Face, ≈ 2 GB). Speed on an RTX 5070 Ti: ≈ 0.05 s to synthesize a reply, ≈ 1 s to transcribe an answer.
 - CUDA: PyTorch (Kokoro) ships CUDA 13 libraries, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS, provided by `nvidia-cublas-cu12` and preloaded in `app/speech/cuda.py`. `av` is pinned below 16 for `faster-whisper` 1.2.
 - `SPEECH_ENABLED=false` turns speech off (the endpoints return 503).
-- Later: sentence-by-sentence TTS while the reply streams, to cut the wait before the voice starts.
 
 ## Deployment
 
