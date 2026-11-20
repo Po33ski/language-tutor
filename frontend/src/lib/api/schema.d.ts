@@ -127,7 +127,13 @@ export interface paths {
          * @description 404 until the onboarding form has been filled in.
          */
         get: operations["get_profile_api_profile_get"];
-        put?: never;
+        /**
+         * Update Profile
+         * @description Replace the learner's main preferences (the edit-profile form sends every field).
+         *
+         *     Lessons already in progress keep the settings they started with.
+         */
+        put: operations["update_profile_api_profile_put"];
         /**
          * Create Profile
          * @description Create the profile from the onboarding form; 409 if the account already has one.
@@ -231,7 +237,9 @@ export interface paths {
          * @description Run one tutor turn and stream it as server-sent events.
          *
          *     Events: `token` {text}, `mistake` {original, corrected, explanation},
-         *     `vocabulary` {word, meaning, example}, `error` {message}, `done` {}.
+         *     `vocabulary` {word, meaning, example}, `time_up` {} (this reply was the tutor's
+         *     closing message: the lesson's time is over, so the client ends the lesson),
+         *     `error` {message}, `done` {}.
          */
         post: operations["send_message_api_lessons__lesson_id__messages_post"];
         delete?: never;
@@ -359,6 +367,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Duration Minutes */
+            duration_minutes?: number | null;
             /** Ended At */
             ended_at?: string | null;
             summary?: components["schemas"]["LessonSummary"] | null;
@@ -377,6 +387,8 @@ export interface components {
             mistakes: components["schemas"]["Mistake"][];
             /** Vocabulary */
             vocabulary: components["schemas"]["VocabularyItem"][];
+            /** Time Left Seconds */
+            time_left_seconds?: number | null;
         };
         /**
          * LessonStatus
@@ -446,6 +458,11 @@ export interface components {
             preferences?: {
                 [key: string]: string;
             };
+            /**
+             * Lesson Minutes
+             * @default 15
+             */
+            lesson_minutes: number;
             /** Id */
             id: string;
             /**
@@ -454,7 +471,10 @@ export interface components {
              */
             created_at: string;
         };
-        /** ProfileCreate */
+        /**
+         * ProfileCreate
+         * @description The learner's main preferences: set in the onboarding form, editable later.
+         */
         ProfileCreate: {
             /** Name */
             name: string;
@@ -470,6 +490,11 @@ export interface components {
             preferences?: {
                 [key: string]: string;
             };
+            /**
+             * Lesson Minutes
+             * @default 15
+             */
+            lesson_minutes: number;
         };
         /**
          * Progress
@@ -701,6 +726,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Profile"];
+                };
+            };
+        };
+    };
+    update_profile_api_profile_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

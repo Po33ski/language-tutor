@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { useAccount } from "@/components/auth/auth-gate";
@@ -40,6 +41,18 @@ export function AccountScreen() {
             Member since {new Date(account.created_at).toLocaleDateString()}
           </p>
         </header>
+
+        {account.has_profile ? (
+          <section className="flex flex-col items-start gap-3 border-t border-line pt-8">
+            <h2 className={sectionTitle}>Learning profile</h2>
+            <p className="text-muted">
+              Your level, main topic, goal, lesson length and what the tutor should know.
+            </p>
+            <Link href="/profile" className={buttonSecondary}>
+              Edit profile
+            </Link>
+          </section>
+        ) : null}
 
         <ChangePasswordForm />
 

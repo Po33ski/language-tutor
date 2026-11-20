@@ -12,6 +12,7 @@ import {
 } from "@/components/icons";
 import { FeedbackPanel } from "@/components/lesson/feedback-panel";
 import { LessonSummaryCard } from "@/components/lesson/lesson-summary-card";
+import { LessonTimer } from "@/components/lesson/lesson-timer";
 import { MessageComposer } from "@/components/lesson/message-composer";
 import { MessageList } from "@/components/lesson/message-list";
 import { buttonPrimary, buttonSecondary, errorText, iconButton } from "@/components/ui";
@@ -44,6 +45,10 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
   const [notesOpen, setNotesOpen] = useState(false);
   // How many notes (corrections + words) the learner has seen in the mobile notes sheet.
   const [seenNotes, setSeenNotes] = useState(0);
+  // When the lesson's time runs out (this device's clock, from the server's count);
+  // null for lessons without a planned length.
+  const [deadline, setDeadline] = useState<number | null>(null);
+  const [timeUp, setTimeUp] = useState(false);
   const voiceEnabled = useVoiceEnabled();
   const { speak, startStream, stop: stopSpeaking, speakingText } = useSpeaker();
 
@@ -54,11 +59,26 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
     voiceEnabledRef.current = voiceEnabled;
   }, [voiceEnabled]);
 
+  /** End the lesson and show its summary (no confirmation). */
+  const finishLesson = useCallback(async () => {
+    setEnding(true);
+    setError(null);
+    try {
+      setLesson(await api.endLesson(lessonId));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not end the lesson.");
+    } finally {
+      setEnding(false);
+    }
+  }, [lessonId]);
+
   const runTurn = useCallback(
     async (content: string | null) => {
       setError(null);
       setDraft("");
       let reply = "";
+      // Set when this reply is the tutor's closing message (the time is over).
+      let closing = false;
       // Read the reply aloud while it streams: each finished sentence is queued at once.
       const voice = voiceEnabledRef.current ? startStream() : null;
       let unspoken = "";
@@ -75,6 +95,9 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
           },
           onMistake: (mistake) => setMistakes((previous) => [...previous, mistake]),
           onVocabulary: (item) => setVocabulary((previous) => [...previous, item]),
+          onTimeUp: () => {
+            closing = true;
+          },
         });
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : "The tutor could not answer.");
@@ -86,8 +109,10 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
           voice.finish(reply);
         }
       }
+      // The tutor said goodbye: end the lesson, so its summary appears.
+      if (closing) void finishLesson();
     },
-    [lessonId, startStream],
+    [lessonId, startStream, finishLesson],
   );
 
   useEffect(() => {
@@ -102,6 +127,9 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
         setVocabulary(detail.vocabulary);
         // Notes from before this page load are not news.
         setSeenNotes(detail.mistakes.length + detail.vocabulary.length);
+        const timeLeft = detail.time_left_seconds;
+        setDeadline(timeLeft == null ? null : Date.now() + timeLeft * 1000);
+        setTimeUp(timeLeft === 0);
         const isNew = detail.messages.length === 0 && detail.lesson.status === "active";
         if (isNew && !kickoffRequested.has(lessonId)) {
           kickoffRequested.add(lessonId);
@@ -121,18 +149,12 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
     void runTurn(content);
   }
 
-  async function endLesson() {
+  function endLesson() {
     if (!window.confirm("End this lesson? The tutor will write a summary of it.")) return;
-    setEnding(true);
-    setError(null);
-    try {
-      setLesson(await api.endLesson(lessonId));
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not end the lesson.");
-    } finally {
-      setEnding(false);
-    }
+    void finishLesson();
   }
+
+  const handleTimeUp = useCallback(() => setTimeUp(true), []);
 
   function toggleVoice() {
     if (voiceEnabled) stopSpeaking();
@@ -152,7 +174,8 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <main className="flex h-dvh flex-col">
-      <header className="border-b border-line">
+      {/* relative: the timer's progress bar runs along the header's bottom edge. */}
+      <header className="relative border-b border-line">
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-1 px-2 sm:gap-2 sm:px-4">
           <Link href="/" className={iconButton} aria-label="Back to your lessons">
             <ChevronLeftIcon />
@@ -162,13 +185,21 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
               {lesson?.topic ?? "Lesson"}
             </h1>
             <p className="truncate text-sm text-muted">
-              {lesson === null
-                ? " "
-                : isActive
-                  ? "Lesson in progress"
-                  : lesson.status === "summarized"
-                    ? "Lesson completed"
-                    : "Lesson ended"}
+              {lesson === null ? (
+                "\u00a0"
+              ) : isActive && deadline !== null && lesson.duration_minutes ? (
+                <LessonTimer
+                  deadline={deadline}
+                  durationMinutes={lesson.duration_minutes}
+                  onTimeUp={handleTimeUp}
+                />
+              ) : isActive ? (
+                "Lesson in progress"
+              ) : lesson.status === "summarized" ? (
+                "Lesson completed"
+              ) : (
+                "Lesson ended"
+              )}
             </p>
           </div>
           <button
@@ -241,6 +272,23 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
             <p className={`${errorText} mx-auto w-full max-w-2xl px-4 pb-2 sm:px-6`} role="alert">
               {error}
             </p>
+          ) : null}
+          {isActive && timeUp && draft === null && !ending ? (
+            <div className="mx-auto w-full max-w-2xl px-3 pb-2 sm:px-6">
+              <div className="flex flex-col gap-3 rounded-2xl bg-surface px-4 py-3 sm:flex-row sm:items-center">
+                <p className="flex-1 text-[15px]" role="status">
+                  Time&apos;s up. Send one last answer to hear the tutor&apos;s goodbye, or
+                  end the lesson now.
+                </p>
+                <button
+                  type="button"
+                  className={`${buttonPrimary} min-h-10 shrink-0 px-4 text-sm`}
+                  onClick={() => void finishLesson()}
+                >
+                  End lesson now
+                </button>
+              </div>
+            </div>
           ) : null}
           {lesson && !isActive ? (
             <LessonEndedNote discarded={lesson.status === "discarded"} />

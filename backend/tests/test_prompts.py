@@ -34,3 +34,11 @@ def test_prompt_for_first_lesson() -> None:
     prompt = build_system_prompt({"profile": {"name": "Anna"}, "topic": "Small talk"})
     assert "This is the learner's first lesson." in prompt
     assert "No previous lessons yet." in prompt
+
+
+def test_prompt_explains_the_lesson_clock() -> None:
+    timed = build_system_prompt({"profile": {"name": "Anna"}, "lesson_minutes": 20})
+    assert "This lesson lasts 20 minutes." in timed
+    assert "[Lesson clock]" in timed
+    untimed = build_system_prompt({"profile": {"name": "Anna"}})
+    assert "no fixed length" in untimed

@@ -1,12 +1,14 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
+from app.agent.clock import CLOCK_NOTE_KEY, ClockPhase, LessonClock
 from app.agent.prompts import KICKOFF_MESSAGE
 from app.agent.state import Mistake, VocabularyItem
 from app.agent.transcript import (
@@ -38,11 +40,24 @@ class LessonDetail(BaseModel):
     messages: list[ChatMessage]
     mistakes: list[Mistake]
     vocabulary: list[VocabularyItem]
+    # Seconds left on the lesson clock, measured by the server (so a wrong device clock
+    # does not matter); None for ended lessons and lessons without a planned length.
+    time_left_seconds: int | None = None
 
 
 class SendMessageRequest(BaseModel):
     # None starts the lesson: the tutor greets the learner and asks the first question.
     content: str | None = Field(default=None, max_length=4000)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _clock(lesson: Lesson) -> LessonClock | None:
+    if lesson.duration_minutes is None:
+        return None
+    return LessonClock.at(lesson.created_at, lesson.duration_minutes, _now())
 
 
 def _sse(event: str, data: dict) -> str:
@@ -64,7 +79,7 @@ async def create_lesson(data: LessonCreate, user: CurrentUserDep, store: StoreDe
     if profile is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Create your profile first")
     topic = (data.topic or "").strip() or profile.main_topic
-    return await memory.create_lesson(store, profile.id, topic)
+    return await memory.create_lesson(store, profile.id, topic, profile.lesson_minutes)
 
 
 @router.get("")
@@ -80,11 +95,13 @@ async def get_lesson(
     lesson = await _require_lesson(store, lesson_id, user)
     snapshot = await tutor.aget_state(thread_config(lesson_id))
     values = snapshot.values
+    clock = _clock(lesson) if lesson.status == memory.LessonStatus.ACTIVE else None
     return LessonDetail(
         lesson=lesson,
         messages=to_chat_messages(values.get("messages", [])),
         mistakes=values.get("mistakes", []),
         vocabulary=values.get("vocabulary", []),
+        time_left_seconds=round(clock.remaining_seconds) if clock else None,
     )
 
 
@@ -92,7 +109,7 @@ async def _initial_state(store: StoreDep, settings: Settings, lesson: Lesson) ->
     """Learner context copied from long-term memory into the lesson at its start."""
     profile = await memory.get_profile(store, lesson.user_id)
     progress = await memory.get_progress(store, lesson.user_id)
-    return {
+    state = {
         "user_id": lesson.user_id,
         "profile": profile.model_dump(mode="json") if profile else {},
         "topic": lesson.topic,
@@ -104,6 +121,16 @@ async def _initial_state(store: StoreDep, settings: Settings, lesson: Lesson) ->
         "vocabulary": [],
         "messages": [HumanMessage(KICKOFF_MESSAGE, id=f"{KICKOFF_ID_PREFIX}{lesson.id}")],
     }
+    if lesson.duration_minutes is not None:
+        state["lesson_minutes"] = lesson.duration_minutes
+    return state
+
+
+def _learner_message(content: str, clock: LessonClock | None) -> HumanMessage:
+    """The learner's message, with the lesson clock note for the tutor (if timed)."""
+    if clock is None:
+        return HumanMessage(content)
+    return HumanMessage(content, additional_kwargs={CLOCK_NOTE_KEY: clock.note()})
 
 
 @router.post("/{lesson_id}/end", dependencies=[Depends(rate_limited("tutor"))])
@@ -150,7 +177,9 @@ async def send_message(
     """Run one tutor turn and stream it as server-sent events.
 
     Events: `token` {text}, `mistake` {original, corrected, explanation},
-    `vocabulary` {word, meaning, example}, `error` {message}, `done` {}.
+    `vocabulary` {word, meaning, example}, `time_up` {} (this reply was the tutor's
+    closing message: the lesson's time is over, so the client ends the lesson),
+    `error` {message}, `done` {}.
     """
     lesson = await _require_lesson(store, lesson_id, user)
     if lesson.status != memory.LessonStatus.ACTIVE:
@@ -176,10 +205,12 @@ async def send_message(
                 yield _sse("error", {"message": "The lesson has not started yet."})
                 return
 
+            # The clock is read when the turn runs, under the lock.
+            clock = None if is_kickoff else _clock(lesson)
             inputs = (
                 await _initial_state(store, settings, lesson)
                 if is_kickoff
-                else {"messages": [HumanMessage(body.content.strip())]}
+                else {"messages": [_learner_message(body.content.strip(), clock)]}
             )
             try:
                 async for mode, data in tutor.astream(
@@ -191,6 +222,8 @@ async def send_message(
                 logger.exception("Tutor turn failed for lesson %s", lesson_id)
                 yield _sse("error", {"message": "The tutor could not answer. Try again."})
                 return
+            if clock is not None and clock.phase is ClockPhase.TIME_UP:
+                yield _sse("time_up", {})
             yield _sse("done", {})
 
     return StreamingResponse(stream(), media_type="text/event-stream")

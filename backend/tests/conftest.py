@@ -4,7 +4,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from pydantic import Field
 
 from app.config import Settings
 from app.main import create_app
@@ -12,12 +13,18 @@ from app.storage.memory import LessonSummary
 
 
 class FakeTutorModel(GenericFakeChatModel):
-    """Replays scripted AI messages; tool binding is a no-op."""
+    """Replays scripted AI messages; tool binding is a no-op. `inputs` records the
+    messages of every call, as the model received them."""
 
     disable_streaming: bool = True
+    inputs: list[list[BaseMessage]] = Field(default_factory=list)
 
     def bind_tools(self, tools, **kwargs):
         return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.inputs.append(list(messages))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
 
 class FakeSummarizer:
@@ -120,6 +127,7 @@ def make_client(tmp_path, summarizer, speech) -> Iterator:
         settings = Settings(data_dir=tmp_path, anthropic_api_key="test", **settings_overrides)
         model = FakeTutorModel(messages=iter(responses))
         client = TestClient(create_app(settings, model, summarizer, speech))
+        client.model = model  # lets tests inspect what the tutor model received
         client.__enter__()  # run the lifespan (opens SQLite, builds the agent)
         clients.append(client)
         if signed_in:

@@ -91,6 +91,9 @@ export const api = {
   getProfile: () => request<Profile>("/profile"),
   createProfile: (data: ProfileCreate) =>
     request<Profile>("/profile", { method: "POST", body: JSON.stringify(data) }),
+  /** Replace the main preferences; lessons in progress keep their settings. */
+  updateProfile: (data: ProfileCreate) =>
+    request<Profile>("/profile", { method: "PUT", body: JSON.stringify(data) }),
   getProgress: () => request<Progress | null>("/profile/progress"),
   listLessons: () => request<Lesson[]>("/lessons"),
   getLesson: (lessonId: string) => request<LessonDetail>(`/lessons/${lessonId}`),
@@ -132,6 +135,8 @@ export interface TutorTurnHandlers {
   onToken: (text: string) => void;
   onMistake: (mistake: Mistake) => void;
   onVocabulary: (item: VocabularyItem) => void;
+  /** The reply was the tutor's closing message: the lesson's time is over. */
+  onTimeUp: () => void;
 }
 
 /**
@@ -185,6 +190,9 @@ function handleEvent(block: string, handlers: TutorTurnHandlers): void {
       break;
     case "vocabulary":
       handlers.onVocabulary(payload);
+      break;
+    case "time_up":
+      handlers.onTimeUp();
       break;
     case "error":
       throw new ApiError(500, payload.message);

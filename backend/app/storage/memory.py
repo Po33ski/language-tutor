@@ -30,12 +30,24 @@ class EnglishLevel(StrEnum):
     C2 = "C2"
 
 
+MIN_LESSON_MINUTES = 5
+MAX_LESSON_MINUTES = 30
+DEFAULT_LESSON_MINUTES = 15
+
+
 class ProfileCreate(BaseModel):
+    """The learner's main preferences: set in the onboarding form, editable later."""
+
     name: str = Field(min_length=1, max_length=50)
     level: EnglishLevel
     main_topic: str = Field(min_length=1, max_length=200)
     goal: str = Field(default="", max_length=500)
+    # Free-form preferences: "notes" from the form, others saved by the tutor.
     preferences: dict[str, str] = Field(default_factory=dict)
+    # Planned length of each lesson. Profiles from before this field get the default.
+    lesson_minutes: int = Field(
+        default=DEFAULT_LESSON_MINUTES, ge=MIN_LESSON_MINUTES, le=MAX_LESSON_MINUTES
+    )
 
 
 class Profile(ProfileCreate):
@@ -65,7 +77,10 @@ class Lesson(BaseModel):
     user_id: str
     topic: str
     status: LessonStatus = LessonStatus.ACTIVE
+    # The lesson clock starts here (the tutor's opening turn follows at once).
     created_at: datetime
+    # Copied from the profile when the lesson is created; None for older lessons.
+    duration_minutes: int | None = None
     ended_at: datetime | None = None
     summary: LessonSummary | None = None
 
@@ -100,6 +115,16 @@ async def list_profiles(store: BaseStore) -> list[Profile]:
     return sorted(profiles, key=lambda p: p.created_at)
 
 
+async def update_profile(store: BaseStore, user_id: str, data: ProfileCreate) -> Profile | None:
+    """Replace the editable fields; the id and creation date stay. None if no profile."""
+    profile = await get_profile(store, user_id)
+    if profile is None:
+        return None
+    updated = profile.model_copy(update=data.model_dump())
+    await store.aput(PROFILES_NS, user_id, updated.model_dump(mode="json"))
+    return updated
+
+
 async def save_preference(store: BaseStore, user_id: str, key: str, value: str) -> None:
     profile = await get_profile(store, user_id)
     if profile is None:
@@ -111,8 +136,16 @@ async def save_preference(store: BaseStore, user_id: str, key: str, value: str) 
 # --- Lessons ------------------------------------------------------------------
 
 
-async def create_lesson(store: BaseStore, user_id: str, topic: str) -> Lesson:
-    lesson = Lesson(id=uuid4().hex, user_id=user_id, topic=topic, created_at=_now())
+async def create_lesson(
+    store: BaseStore, user_id: str, topic: str, duration_minutes: int | None = None
+) -> Lesson:
+    lesson = Lesson(
+        id=uuid4().hex,
+        user_id=user_id,
+        topic=topic,
+        created_at=_now(),
+        duration_minutes=duration_minutes,
+    )
     await store.aput(LESSONS_NS, lesson.id, lesson.model_dump(mode="json"))
     return lesson
 

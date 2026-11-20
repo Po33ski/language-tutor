@@ -26,6 +26,8 @@ class TutorState(AgentState):
     user_id: NotRequired[str]
     profile: NotRequired[dict]
     topic: NotRequired[str]
+    # Planned length; missing for lessons created before lessons had a length.
+    lesson_minutes: NotRequired[int]
     progress: NotRequired[str]
     previous_summaries: NotRequired[list[dict]]
     mistakes: NotRequired[Annotated[list[Mistake], operator.add]]

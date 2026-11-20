@@ -27,6 +27,18 @@ async def create_profile(data: ProfileCreate, user: CurrentUserDep, store: Store
     return await memory.create_profile(store, data, user.profile_id)
 
 
+@router.put("")
+async def update_profile(data: ProfileCreate, user: CurrentUserDep, store: StoreDep) -> Profile:
+    """Replace the learner's main preferences (the edit-profile form sends every field).
+
+    Lessons already in progress keep the settings they started with.
+    """
+    profile = await memory.update_profile(store, user.profile_id, data)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No profile yet")
+    return profile
+
+
 @router.get("/progress")
 async def get_progress(user: CurrentUserDep, store: StoreDep) -> Progress | None:
     """The learner's progress profile; null until the first lesson is summarized."""

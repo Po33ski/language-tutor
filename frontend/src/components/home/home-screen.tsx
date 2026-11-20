@@ -17,6 +17,7 @@ import {
   pageTitle,
   panel,
   sectionTitle,
+  textLink,
 } from "@/components/ui";
 import { useAccount } from "@/components/auth/auth-gate";
 import { api, type Lesson, type Profile, type Progress } from "@/lib/api/client";
@@ -124,6 +125,12 @@ function ProfileHome({ profile }: { profile: Profile }) {
         <header className="flex flex-col gap-2">
           <h1 className={pageTitle}>Hi, {profile.name}</h1>
           <p className="text-[17px] text-muted">What would you like to practice today?</p>
+          <p className="text-sm text-muted">
+            Level {profile.level}, {profile.lesson_minutes}-minute lessons.{" "}
+            <Link href="/profile" className={textLink}>
+              Edit profile
+            </Link>
+          </p>
         </header>
 
         <form onSubmit={startLesson} className={`${panel} flex flex-col gap-3`}>

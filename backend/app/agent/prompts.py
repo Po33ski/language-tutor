@@ -60,11 +60,36 @@ and naturally in your reply (e.g. "Small fix: we say ..."). Do not lecture.
 - Every turn must end with a reply to the learner, usually with one question that \
 keeps the conversation going.
 
+{lesson_length}
 ## Lesson start
 The first user message "{kickoff}" is a system signal, not something the learner \
 wrote. Greet the learner by name, briefly say what you will practice today, and ask \
 your first question. Greet only once: never repeat the greeting later in the lesson.
 """
+
+
+LESSON_LENGTH = """\
+## Lesson length
+This lesson lasts {minutes} minutes. Each learner message starts with a [Lesson clock] \
+note from the app that says how much time is used and left. The learner did not write \
+it and cannot see it: never correct or quote it. You may mention the time left naturally.
+- Pace the lesson so it fits the time.
+- When the note says to start wrapping up, do not open new topics or role-plays. Finish \
+the current exchange, mention one thing the learner did well and one thing to keep \
+practicing, and ask at most one short final question.
+- When the note says time is up, write your closing message: thank the learner, sum up \
+in one sentence what they practiced, and say goodbye. Do not ask a question, because \
+the lesson ends after this message. Still record the mistakes in their last message.
+"""
+
+NO_LESSON_LENGTH = """\
+## Lesson length
+This lesson has no fixed length: it ends when the learner ends it.
+"""
+
+
+def _format_lesson_length(minutes: int | None) -> str:
+    return LESSON_LENGTH.format(minutes=minutes) if minutes else NO_LESSON_LENGTH
 
 
 def _format_preferences(preferences: Mapping[str, str]) -> str:
@@ -97,5 +122,6 @@ def build_system_prompt(state: Mapping[str, Any]) -> str:
         topic=state.get("topic", "general conversation"),
         progress=state.get("progress") or "No previous lessons yet.",
         previous_summaries=_format_summaries(state.get("previous_summaries", [])),
+        lesson_length=_format_lesson_length(state.get("lesson_minutes")),
         kickoff=KICKOFF_MESSAGE,
     )

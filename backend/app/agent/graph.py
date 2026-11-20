@@ -1,7 +1,14 @@
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain.agents import AgentState, create_agent
-from langchain.agents.middleware import ModelRequest, before_model, dynamic_prompt
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+    before_model,
+    dynamic_prompt,
+)
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
@@ -9,6 +16,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
 
+from app.agent.clock import with_clock_notes
 from app.agent.prompts import build_system_prompt
 from app.agent.state import TutorState
 from app.agent.tools import TUTOR_TOOLS
@@ -18,6 +26,26 @@ from app.config import Settings
 @dynamic_prompt
 def tutor_prompt(request: ModelRequest) -> str:
     return build_system_prompt(request.state)
+
+
+class LessonClockNotes(AgentMiddleware):
+    """Shows the model the lesson clock note stored with each learner message.
+
+    The note stays in the message metadata, so the conversation the learner sees and the
+    summarizer's transcript stay clean (see `app/agent/clock.py`).
+    """
+
+    def wrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
+    ) -> ModelResponse:
+        return handler(request.override(messages=with_clock_notes(request.messages)))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(request.override(messages=with_clock_notes(request.messages)))
 
 
 @before_model(can_jump_to=["end"])
@@ -55,7 +83,7 @@ def build_tutor_agent(model: BaseChatModel, checkpointer: BaseCheckpointSaver, s
     return create_agent(
         model,
         tools=TUTOR_TOOLS,
-        middleware=[tutor_prompt, end_turn_if_already_replied],
+        middleware=[tutor_prompt, LessonClockNotes(), end_turn_if_already_replied],
         state_schema=TutorState,
         checkpointer=checkpointer,
         store=store,

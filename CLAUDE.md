@@ -23,8 +23,9 @@ More detail lives in other docs:
 | Topic | Decision |
 |---|---|
 | Users | Accounts with email + password, **open signup**, **one account = one learner profile** (`users.profile_id` = the store's `user_id`). No email sending yet: no verification, password reset via an admin command. Profiles from before accounts are linked with `claim-profile`. |
-| Onboarding | A form, filled once per profile: name, CEFR level (A1–C2), main topic, goal, optional preferences. A new lesson asks only for its topic, which defaults to the main topic. |
+| Onboarding | A form, filled once per profile: name, CEFR level (A1–C2), main topic, lesson length (5–30 min, default 15), goal, optional preferences. A new lesson asks only for its topic, which defaults to the main topic. The same form, prefilled, is the edit-profile page (`/profile`); it also lets the learner remove preferences the tutor saved. Changes apply from the next lesson. |
 | Lesson | The tutor speaks first. It drives the topic with role-play, asks one question at a time and keeps replies to 2–4 sentences of plain text, because replies are read aloud. |
+| Lesson length | A countdown in the lesson header (wall clock from `Lesson.created_at`, no pause). The tutor knows the time: it wraps up in the last 20% (1–3 min); after the time is over, its next reply is a goodbye and the lesson ends by itself (summary). A silent learner is not interrupted: the page shows "Time's up" with "End lesson now". Details: `docs/ARCHITECTURE.md` → Lesson length. |
 | Corrections | Mentioned briefly and naturally in the reply. Full details (original → corrected + explanation) appear in a side panel. Each correction gives one natural version, never "A / B". |
 | Voice | Mic button (Speak/Stop). The transcript is **sent immediately**, with no edit step. Tutor replies are read aloud when "Voice on" is set (the default). Every tutor message has a replay button. Typing is always available too. |
 | Lesson end | An "End lesson" button triggers a summary and a progress update. Lessons left open are ended automatically at backend startup. |
@@ -69,7 +70,8 @@ More detail lives in other docs:
 | `api/{health,auth,profiles,lessons,speech}.py` | Routers, all under the `/api` prefix. `lessons.py` holds the SSE turn endpoint and `_initial_state`, which copies long-term memory into a new lesson. |
 | `agent/graph.py` | `build_model`, `build_tutor_agent` (`create_agent` + middleware `tutor_prompt` and `end_turn_if_already_replied`) |
 | `agent/state.py` | `TutorState(AgentState)`: `user_id`, `profile`, `topic`, `progress`, `previous_summaries`, plus append-only `mistakes` and `vocabulary` lists. `Mistake` and `VocabularyItem` are TypedDicts. |
-| `agent/prompts.py` | `TUTOR_SYSTEM_PROMPT`, `build_system_prompt(state)`, and `KICKOFF_MESSAGE = "[START_LESSON]"` |
+| `agent/prompts.py` | `TUTOR_SYSTEM_PROMPT`, `build_system_prompt(state)` (includes the fixed lesson length and the phase rules), and `KICKOFF_MESSAGE = "[START_LESSON]"` |
+| `agent/clock.py` | `LessonClock` (phases `on_track` / `wrap_up` / `time_up`, the clock note), `with_clock_notes` (used by the `LessonClockNotes` middleware in `graph.py`), `CLOCK_NOTE_KEY` |
 | `agent/tools.py` | `record_mistake` and `add_vocabulary` return `Command(update=...)` with a `ToolMessage`. `save_preference` writes to the store. |
 | `agent/transcript.py` | `thread_config(lesson_id)` and `to_chat_messages`, which hides the kickoff and tool messages and merges consecutive assistant texts |
 | `agent/summarizer.py` | `Summarizer` protocol and `LlmSummarizer`, which produces a structured `LessonSummary` and a progress text of at most 120 words |
@@ -107,6 +109,7 @@ More detail lives in other docs:
 - **Thinking-block binding (Haiku 5.5):**
   - The system prompt must stay byte-identical for a whole lesson. That is why it is built from lesson state, never from live store reads.
   - `build_model` sets `thinking.block_binding.prefix_mismatch_behavior = "drop_block"` and passes the beta header `thinking-binding-controls-2026-08-01`. Without them, any change to the prompt or tools breaks lessons that are already in progress with a 400 error.
+- **Lesson clock:** never put the ticking time in the system prompt (it must stay byte-identical). The time goes into each learner message's `additional_kwargs["lesson_clock"]`, rendered for the model by `LessonClockNotes`; keep the rendering deterministic so earlier turns never change.
 - **Structured output:** use `with_structured_output(..., method="json_schema")`. The default method forces tool use, and the API rejects forced tool use when thinking is on.
 - **Duplicate or empty replies:** Haiku sometimes writes its reply alongside the tool calls and then again after the tool results. The `end_turn_if_already_replied` middleware jumps to the end in that case. Keep it, and keep its test.
 - **Kickoff:** a hidden `HumanMessage("[START_LESSON]")` whose id starts with `kickoff-`. `to_chat_messages` removes it from everything the UI shows.
@@ -147,7 +150,7 @@ More detail lives in other docs:
 |---|---|
 | `app/page.tsx`, `app/onboarding/page.tsx`, `app/lesson/[id]/page.tsx` | Routes: home (the account's profile, progress, lessons), onboarding form, lesson |
 | `components/home/`, `components/onboarding/` | Home screen and onboarding form |
-| `components/lesson/` | `lesson-view` (orchestrates a lesson), `message-list` (bubbles + replay), `message-composer` (textarea, Speak/Stop, Send), `feedback-panel` (corrections + vocabulary), `lesson-summary-card` |
+| `components/lesson/` | `lesson-view` (orchestrates a lesson; ends it after a `time_up` event), `lesson-timer` (countdown + header progress bar; re-renders only itself every second; `wrapUpSeconds` mirrors the backend rule), `message-list` (bubbles + replay), `message-composer` (textarea, Speak/Stop, Send), `feedback-panel` (corrections + vocabulary), `lesson-summary-card` |
 | `components/backend-status.tsx` | A warning on the home screen, shown only when the server cannot be reached |
 | `components/brand.tsx`, `components/icons.tsx` | The logo (`Wordmark`), the top bar of regular pages (`AppHeader`), inline SVG icons |
 | `components/lesson/lesson-view.tsx` layout | Wide screens: conversation + notes column. Below `lg`: the notes open as a bottom sheet (`<dialog>`) from the header, with a green dot for unseen notes. The lesson summary is shown at the end of the conversation. |
@@ -156,7 +159,8 @@ More detail lives in other docs:
 | `lib/api/client.ts` | The `api` object (REST calls), `streamTutorTurn` (SSE parser), `ApiError` |
 | `lib/stored-value.ts` | `createStoredValue(key)`: localStorage plus `useSyncExternalStore`. Used by `session.ts` and `voice-settings.ts`. |
 | `components/auth/auth-gate.tsx`, `lib/session.ts` | `AuthGate` wraps the app in `layout.tsx`: sign-in / create-account screen (`auth-screen.tsx`) until `GET /api/auth/me` confirms the stored session token; then `useAccount()` gives `{account, refresh, signOut}`. Any 401 clears the token. A new account goes to `/onboarding`. |
-| `app/account/page.tsx`, `components/account/` | Change password, sign out |
+| `app/account/page.tsx`, `components/account/` | Change password, sign out, link to the learning profile |
+| `app/profile/page.tsx`, `components/profile/` | `ProfileForm` (shared by onboarding and editing), `ProfileEditor` (loads the profile, `PUT /api/profile`) |
 
 ### Conventions and gotchas
 
@@ -223,5 +227,5 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
 - A mobile app (React Native/Expo or a PWA) on top of the same API
 - Prompt caching
 - Retry after a failed tutor turn
-- Profile edit/delete
+- Profile delete
 - Frontend tests (CI runs lint, tsc and build only)

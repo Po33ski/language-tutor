@@ -40,7 +40,7 @@ cd frontend && npm run lint && npx tsc --noEmit
 
 ## Backend API
 
-The backend exposes **16 endpoints** in 5 groups (routers), all under the `/api` prefix. Request and response shapes are defined by **Pydantic models**; FastAPI uses them to validate data and to generate the API docs. Interactive docs, where every endpoint can be called by hand, are at **http://localhost:8000/docs**.
+The backend exposes **17 endpoints** in 5 groups (routers), all under the `/api` prefix. Request and response shapes are defined by **Pydantic models**; FastAPI uses them to validate data and to generate the API docs. Interactive docs, where every endpoint can be called by hand, are at **http://localhost:8000/docs**.
 
 ### Endpoints
 
@@ -70,6 +70,7 @@ One learner profile per account.
 |---|---|---|---|
 | `GET /api/profile` | – | `Profile` | The account's profile; 404 until onboarding is done. |
 | `POST /api/profile` | `ProfileCreate` | `Profile` (201) | Creates it from the onboarding form; 409 if it exists. |
+| `PUT /api/profile` | `ProfileCreate` | `Profile` | Replaces the main preferences (the edit-profile page sends every field); 404 before onboarding. Lessons in progress keep the settings they started with. |
 | `GET /api/profile/progress` | – | `Progress` or `null` | The progress profile for the "Your progress" card; `null` until the first lesson is summarized. |
 
 #### 4. Lessons: [`lessons.py`](backend/app/api/lessons.py)
@@ -78,7 +79,7 @@ One learner profile per account.
 |---|---|---|---|
 | `POST /api/lessons` | `LessonCreate` | `Lesson` (201) | Creates a lesson. Without a topic, the profile's main topic is used. |
 | `GET /api/lessons` | – | list of `Lesson` | The account's lessons, newest first. |
-| `GET /api/lessons/{lesson_id}` | – | `LessonDetail` | Full lesson state (conversation, corrections, vocabulary), used when a lesson page is opened or reloaded. |
+| `GET /api/lessons/{lesson_id}` | – | `LessonDetail` | Full lesson state (conversation, corrections, vocabulary, time left), used when a lesson page is opened or reloaded. |
 | `POST /api/lessons/{lesson_id}/messages` | `SendMessageRequest` | **SSE stream** | One conversation turn with the tutor. |
 | `POST /api/lessons/{lesson_id}/end` | – | `Lesson` | Ends the lesson: writes the summary and updates the progress profile. Safe to call twice. |
 
@@ -90,6 +91,7 @@ One learner profile per account.
 | `mistake` | `{original, corrected, explanation}` | The tutor recorded a mistake; it appears in the corrections panel right away. |
 | `vocabulary` | `{word, meaning, example}` | A new word or phrase. |
 | `error` | `{message}` | The turn failed. |
+| `time_up` | `{}` | The lesson's time was over, so this reply was the tutor's goodbye; the client ends the lesson. |
 | `done` | `{}` | The turn is complete. |
 
 Sending `content: null` **starts the lesson**: the tutor greets the learner and asks the first question.
@@ -130,7 +132,7 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 
 | Model | Fields |
 |---|---|
-| `ProfileCreate` | `name` (1–50 chars), `level`, `main_topic`, `goal` (optional), `preferences` (optional dict) |
+| `ProfileCreate` | `name` (1–50 chars), `level`, `main_topic`, `goal` (optional), `preferences` (optional dict: `notes` from the form, other keys saved by the tutor), `lesson_minutes` (5–30, default 15) |
 | `Profile` | `ProfileCreate` fields + server-assigned `id` and `created_at` |
 | `EnglishLevel` | enum `A1`–`C2`; any other value is rejected with 422 |
 
@@ -141,10 +143,10 @@ The "*Create* model + full model" pattern is common: the client sends only what 
 | Model | Fields |
 |---|---|
 | `LessonCreate` | `topic` (optional); the lesson belongs to the signed-in account |
-| `Lesson` | `id`, `user_id`, `topic`, `status`, `created_at`, `ended_at`, `summary` |
+| `Lesson` | `id`, `user_id`, `topic`, `status`, `created_at` (the lesson clock starts here), `duration_minutes` (copied from the profile; `null` for older lessons), `ended_at`, `summary` |
 | `LessonStatus` | `active` (in progress), `summarized` (ended with a summary), `discarded` (ended before the learner wrote anything) |
 | `LessonSummary` | `summary` (2–3 sentences), `practiced`, `recurring_mistakes`, `vocabulary`, `next_steps` |
-| `LessonDetail` | `lesson`, `messages`, `mistakes`, `vocabulary` |
+| `LessonDetail` | `lesson`, `messages`, `mistakes`, `vocabulary`, `time_left_seconds` (counted by the server; `null` for ended or untimed lessons) |
 | `ChatMessage` | `role` (`user` / `assistant`), `content`: the visible conversation, without internal messages |
 | `SendMessageRequest` | `content`: the message (max 4000 chars), or `null` to start the lesson |
 

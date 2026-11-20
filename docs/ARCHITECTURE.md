@@ -53,7 +53,8 @@ every request: Authorization: Bearer <token> ──► SHA-256(token) looked up 
 
 ## Onboarding questionnaire
 
-- A form, filled once per profile: name, English level, main topic, goal, optional preferences.
+- A form, filled once per profile: name, English level, main topic, lesson length (5–30 minutes), goal, optional preferences.
+- The same form, prefilled, is the edit-profile page (`/profile`, `PUT /api/profile`). It also lists the preferences the tutor saved during lessons, so the learner can remove them. Changes apply from the next lesson.
 - Starting a new lesson only asks for the lesson topic (defaults to the main topic).
 
 ## Agent (LangGraph)
@@ -66,6 +67,7 @@ every request: Authorization: Bearer <token> ──► SHA-256(token) looked up 
 | `user_id` | owner of the lesson (used by `save_preference`) |
 | `profile` | snapshot of name, level, preferences, loaded at lesson start |
 | `topic` | lesson topic |
+| `lesson_minutes` | planned length, copied from the lesson (missing for lessons from before lesson lengths) |
 | `progress` | progress profile text, loaded at lesson start |
 | `previous_summaries` | last N lesson summaries, loaded at lesson start |
 | `mistakes` | append-only list of recorded mistakes |
@@ -82,9 +84,22 @@ START → tutor ──(tool calls?)──► tools ──► tutor → END
   - `record_mistake(original, corrected, explanation)` — appends to `mistakes`.
   - `add_vocabulary(word, meaning, example)` — appends to `vocabulary`.
   - `save_preference(key, value)` — writes to the long-term profile.
-- **Middleware:** `tutor_prompt` builds the system prompt from lesson state; `end_turn_if_already_replied` skips the model call after tool results when the tutor already wrote its reply together with the tool calls (otherwise Haiku sometimes repeats the reply, or ends with an empty one).
+- **Middleware:** `tutor_prompt` builds the system prompt from lesson state; `LessonClockNotes` puts each learner message's clock note in front of it for the model (see "Lesson length" below); `end_turn_if_already_replied` skips the model call after tool results when the tutor already wrote its reply together with the tool calls (otherwise Haiku sometimes repeats the reply, or ends with an empty one).
 - **Correction quality:** rules in the prompt (one natural version, smallest change, check prepositions/articles/collocations, ask instead of guessing) were checked on 15 typical learner sentences, 7 of them not mentioned in the prompt and 1 already correct.
 - **Corrections UX:** the tutor mentions a correction briefly and naturally in its reply; full details (original, corrected, explanation) are shown in a side panel fed by `mistakes`.
+
+### Lesson length (the lesson clock)
+
+The learner picks a lesson length (5–30 minutes, default 15) in the onboarding form and can change it later on the edit-profile page. A new lesson copies it into `Lesson.duration_minutes`; the clock runs from `Lesson.created_at` (the tutor's opening turn follows at once) on wall-clock time, with no pause.
+
+- **The tutor's view.** The system prompt must stay byte-identical for the whole lesson (thinking-block binding), so it holds only the fixed part: "This lesson lasts N minutes" and the rules for each phase. The ticking time travels with the learner's messages instead: `send_message` stores a clock note in each `HumanMessage.additional_kwargs["lesson_clock"]` (e.g. `[Lesson clock: 6 of 15 minutes used, about 9 left.]`), and the `LessonClockNotes` middleware shows it to the model in front of the message. The note is stored with its message, so earlier turns look the same on every call; the chat, `to_chat_messages` and the summarizer never see it. Logic: `app/agent/clock.py`.
+- **Phases** (computed by the server when a turn runs):
+  - on track: normal lesson;
+  - wrap up, the last 20% of the lesson (1–3 minutes): no new topics, finish the exchange, one thing done well and one to practice, at most one short final question;
+  - time up: the tutor's reply is its goodbye (thanks, a one-sentence recap, no question). The stream then sends a `time_up` event, and the client ends the lesson, which writes the summary.
+- **If the learner is silent** when the time runs out, the tutor does not interrupt. The lesson page shows "Time's up" with an "End lesson now" button; the next answer gets the goodbye.
+- **The countdown** in the lesson header starts from `LessonDetail.time_left_seconds`, counted by the server, so a wrong device clock does not matter. The page uses the same wrap-up rule as the backend to show "time to wrap up".
+- Lessons created before lesson lengths existed have no clock: the prompt says the lesson has no fixed length.
 
 ### End of lesson (summarization)
 
@@ -92,6 +107,7 @@ Done by the same model (Claude Haiku 5.5, effort `medium`) in `app/agent/summari
 
 **Triggers**
 - The user clicks "End lesson" → `POST /api/lessons/{id}/end` (idempotent; returns the updated lesson).
+- The lesson's time is over: after the tutor's goodbye (`time_up` event) the client calls the same endpoint.
 - Fallback: at startup a background task ends every active lesson idle for more than `STALE_LESSON_HOURS` (default 6; last activity = the lesson's latest checkpoint). The threshold keeps `uvicorn --reload` restarts from closing lessons that are in progress.
 - A lesson where the learner never wrote anything gets status `discarded` and no summary (no LLM call).
 - If the summary call fails, the lesson stays `active` (502) so it can be retried. A failed progress update is logged and does not undo the saved summary.
@@ -135,7 +151,7 @@ Checkpointer and store use separate SQLite files so their writes never contend f
 | `GET /api/lessons/{id}` | visible chat history + mistakes + vocabulary |
 | `POST /api/lessons/{id}/messages` | run one tutor turn, streamed as SSE: `token`, `mistake`, `vocabulary`, `error`, `done` |
 | `POST /api/lessons/{id}/end` | end the lesson: summary + progress profile update |
-| `GET /api/profiles/{id}/progress` | the learner's progress profile (null before the first summary) |
+| `GET /api/profile/progress` | the learner's progress profile (null before the first summary) |
 
 - `content: null` starts the lesson: learner context is copied from long-term memory into the lesson state together with a hidden `[START_LESSON]` message, and the tutor speaks first.
 - One turn at a time per lesson (per-lesson lock; a second request gets 409).
