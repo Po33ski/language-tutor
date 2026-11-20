@@ -9,6 +9,7 @@ from pydantic import Field
 
 from app.config import Settings
 from app.main import create_app
+from app.safety.moderation import ALLOWED, ModerationCategory, ModerationVerdict
 from app.storage.memory import LessonSummary
 
 
@@ -76,6 +77,24 @@ class FakeSpeech:
         pass
 
 
+class FakeModerator:
+    """Blocks messages that contain "BLOCK-ME" (as an insult); records every check."""
+
+    def __init__(self) -> None:
+        self.checked: list[str] = []
+
+    async def check(self, text: str) -> ModerationVerdict:
+        self.checked.append(text)
+        if "BLOCK-ME" in text:
+            return ModerationVerdict(
+                allowed=False, category=ModerationCategory.INSULT, scores={"insult": 0.99}
+            )
+        return ALLOWED
+
+    async def warm_up(self) -> None:
+        pass
+
+
 def mistake_call(original: str, corrected: str, explanation: str) -> AIMessage:
     args = {"original": original, "corrected": corrected, "explanation": explanation}
     return AIMessage(
@@ -101,6 +120,11 @@ def speech() -> FakeSpeech:
     return FakeSpeech()
 
 
+@pytest.fixture
+def moderator() -> FakeModerator:
+    return FakeModerator()
+
+
 STRONG_PASSWORD = "correct horse battery staple"
 
 
@@ -114,7 +138,7 @@ def sign_up(client: TestClient, email: str = "anna@example.com") -> dict:
 
 
 @pytest.fixture
-def make_client(tmp_path, summarizer, speech) -> Iterator:
+def make_client(tmp_path, summarizer, speech, moderator) -> Iterator:
     """Factory: a test client whose tutor replays the given AI messages, signed in to a
     fresh account unless `signed_in=False`. The breached-password check (a network call)
     is off unless a test turns it on."""
@@ -126,7 +150,7 @@ def make_client(tmp_path, summarizer, speech) -> Iterator:
         settings_overrides.setdefault("password_breach_check", False)
         settings = Settings(data_dir=tmp_path, anthropic_api_key="test", **settings_overrides)
         model = FakeTutorModel(messages=iter(responses))
-        client = TestClient(create_app(settings, model, summarizer, speech))
+        client = TestClient(create_app(settings, model, summarizer, speech, moderator))
         client.model = model  # lets tests inspect what the tutor model received
         client.__enter__()  # run the lifespan (opens SQLite, builds the agent)
         clients.append(client)

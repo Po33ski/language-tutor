@@ -10,6 +10,7 @@ from langgraph.store.base import BaseStore
 from app.agent.summarizer import Summarizer
 from app.auth.store import UserStore
 from app.config import Settings
+from app.safety.moderation import Moderator
 from app.speech.service import SpeechService
 
 
@@ -36,6 +37,11 @@ def get_speech(request: Request) -> SpeechService:
     return speech
 
 
+def get_moderator(request: Request) -> Moderator | None:
+    """The message classifier; None when moderation is off (`MODERATION_ENABLED=false`)."""
+    return request.app.state.moderator
+
+
 def get_lesson_locks(request: Request) -> defaultdict[str, asyncio.Lock]:
     """One lock per lesson, so a lesson never runs two agent turns at once."""
     return request.app.state.lesson_locks
@@ -57,4 +63,5 @@ StoreDep = Annotated[BaseStore, Depends(get_store)]
 TutorDep = Annotated[CompiledStateGraph, Depends(get_tutor)]
 SummarizerDep = Annotated[Summarizer, Depends(get_summarizer)]
 SpeechDep = Annotated[SpeechService, Depends(get_speech)]
+ModeratorDep = Annotated[Moderator | None, Depends(get_moderator)]
 LessonLocksDep = Annotated[defaultdict[str, asyncio.Lock], Depends(get_lesson_locks)]

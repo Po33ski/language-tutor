@@ -25,6 +25,7 @@ More detail lives in other docs:
 | Users | Accounts with email + password, **open signup**, **one account = one learner profile** (`users.profile_id` = the store's `user_id`). No email sending yet: no verification, password reset via an admin command. Profiles from before accounts are linked with `claim-profile`. |
 | Onboarding | A form, filled once per profile: name, CEFR level (A1–C2), main topic, lesson length (5–30 min, default 15), goal, optional preferences. A new lesson asks only for its topic, which defaults to the main topic. The same form, prefilled, is the edit-profile page (`/profile`); it also lets the learner remove preferences the tutor saved. Changes apply from the next lesson. |
 | Lesson | The tutor speaks first. It drives the topic with role-play, asks one question at a time and keeps replies to 2–4 sentences of plain text, because replies are read aloud. |
+| Moderation | Every learner message is checked by a local Hugging Face classifier (`unitary/unbiased-toxic-roberta`, CPU, ~30 ms) before the tutor sees it. Blocked: threats, hate, sexual messages, insults aimed at someone. Let through: frustration swearing, untargeted insults, quoted words; the tutor answers rudeness calmly. An LLM classifier is a documented alternative (better context, +0.5–1 s per message). Details: `docs/ARCHITECTURE.md` → Moderation. |
 | Lesson length | A countdown in the lesson header (wall clock from `Lesson.created_at`, no pause). The tutor knows the time: it wraps up in the last 20% (1–3 min); after the time is over, its next reply is a goodbye and the lesson ends by itself (summary). A silent learner is not interrupted: the page shows "Time's up" with "End lesson now". Details: `docs/ARCHITECTURE.md` → Lesson length. |
 | Corrections | Mentioned briefly and naturally in the reply. Full details (original → corrected + explanation) appear in a side panel. Each correction gives one natural version, never "A / B". |
 | Voice | Mic button (Speak/Stop). The transcript is **sent immediately**, with no edit step. Tutor replies are read aloud when "Voice on" is set (the default). Every tutor message has a replay button. Typing is always available too. |
@@ -52,6 +53,7 @@ More detail lives in other docs:
 | Tutor (each lesson turn) | Claude Haiku 5.5, `anthropic:claude-haiku-5-5` | Anthropic API | `LLM_MODEL`, `TUTOR_EFFORT=low` (fast replies; an eval of 15 sentences showed `low` corrects well) |
 | Lesson summary + progress profile | Claude Haiku 5.5 | Anthropic API | `SUMMARY_EFFORT=medium`; ≈ 10 s and ≈ $0.003 per lesson |
 | Speech to text | Whisper `large-v3-turbo`: locally with faster-whisper / CTranslate2, on the server hosted by Groq (local `small` as fallback) | local GPU, float16; server: Groq API, fallback CPU int8 | `STT_PROVIDER` (`local` / `groq`), `GROQ_API_KEY`, `GROQ_STT_MODEL`, `WHISPER_MODEL`, `WHISPER_DEVICE=auto` (`cpu` in the image) |
+| Moderation | `unitary/unbiased-toxic-roberta` (Detoxify "unbiased", Hugging Face `transformers`) | local and server CPU, ~30 ms per message | `MODERATION_ENABLED`, `MODERATION_MODEL` |
 | Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV, one request per sentence | local GPU; server CPU (≈ 1 s per sentence) | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British) |
 
 - The LLM is created with `init_chat_model("provider:model")`, so the provider can change through configuration alone. Haiku was chosen for cost; it may be replaced later.
@@ -76,6 +78,7 @@ More detail lives in other docs:
 | `agent/transcript.py` | `thread_config(lesson_id)` and `to_chat_messages`, which hides the kickoff and tool messages and merges consecutive assistant texts |
 | `agent/summarizer.py` | `Summarizer` protocol and `LlmSummarizer`, which produces a structured `LessonSummary` and a progress text of at most 120 words |
 | `agent/wrapup.py` | `end_lesson` (idempotent; discards a lesson with no learner messages) and `end_stale_lessons` |
+| `safety/moderation.py` | `LocalModerator` (classifier, loaded in the background at startup; fails open), `decide` (thresholds, quoted words left out, insults blocked only when addressed), `BLOCKED_MESSAGES`, the `Moderator` protocol; used by `send_message` (SSE `blocked`) |
 | `storage/memory.py` | All long-term memory models and store access: profiles, lessons, progress |
 | `storage/persistence.py` | `open_persistence(settings)` yields the checkpointer and the store |
 | `speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`), `service.py` (`SpeechService` protocol, `DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro), `cuda.py` (CUDA 12 preload) |
@@ -128,6 +131,7 @@ More detail lives in other docs:
   - `FakeTutorModel`: a `GenericFakeChatModel` subclass with `bind_tools` returning self and `disable_streaming=True`;
   - `FakeSummarizer`;
   - `FakeSpeech`;
+  - `FakeModerator` (blocks messages containing "BLOCK-ME"; always passed, so tests never download the real classifier);
   - the `make_client` fixture, which uses a temporary data dir and signs in a fresh account (`signed_in=False` for an anonymous client; `sign_up(client, email)` switches the client to another account). It turns the breached-password network check off.
 - The SSE token filter must accept both `AIMessageChunk` and `AIMessage`, because the fake model does not stream.
 

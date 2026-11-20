@@ -157,6 +157,18 @@ Checkpointer and store use separate SQLite files so their writes never contend f
 - One turn at a time per lesson (per-lesson lock; a second request gets 409).
 - The system prompt is built from lesson state, so it stays byte-identical for the whole lesson (required by Haiku's thinking-block binding, and good for prompt caching). The model runs with `prefix_mismatch_behavior: "drop_block"` so a lesson survives code changes to the prompt or tools.
 
+## Moderation
+
+Every learner message (typed, or a voice transcript) goes through `Moderator.check` in `POST /api/lessons/{id}/messages` before the agent runs. The kickoff is not checked.
+
+- **Classifier:** `LocalModerator` in `app/safety/moderation.py` runs `unitary/unbiased-toxic-roberta` (the "unbiased" Detoxify model) through a Hugging Face `transformers` pipeline on the CPU: about 30 ms per message, loaded in a background task at startup (≈ 500 MB from Hugging Face on the first start; on the server it lands in the `tutor-models` volume). Messages longer than ~1,000 characters are scored in chunks; the highest score per label counts.
+- **Policy (`decide`):** quoted words are removed first, because a quoted word is mentioned, not used ("what does 'damn' mean?"). Then, in this order: threat ≥ 0.7, identity attack ≥ 0.5 (hate), severe toxicity ≥ 0.5 or insult ≥ 0.9 in a message that addresses someone ("you are…", "…, you idiot"), sexual ≥ 0.2. The first match names the category. The insult score alone cannot tell "this exercise is stupid" from "you are stupid", hence the addressing rule. Thresholds were picked on 37 typical learner messages.
+- **Blocked:** the endpoint answers with SSE `blocked` {message, category} and `done`; the agent is not called and nothing is stored. The client removes the message's bubble and shows the reason. A blocked attempt still counts toward the daily turn quota. The log line has the account, lesson, category and scores, not the text.
+- **Let through on purpose:** swearing out of frustration, insults not aimed at anyone, rude words being asked about. The tutor's prompt tells it to answer rudeness calmly and explain rude words neutrally.
+- **Failures fail open:** if the check raises (e.g. the model is still downloading), the message goes through and the error is logged.
+- **Alternative:** an LLM classifier (e.g. Claude Haiku with structured output) implementing the same `Moderator` protocol: better with context and other languages, but ≈ 0.5–1 s more delay per message and a small cost.
+- `MODERATION_ENABLED=false` turns it off. Tests use `FakeModerator` (blocks messages containing "BLOCK-ME").
+
 ## Voice flow
 
 1. The learner clicks **Speak**; the browser records with MediaRecorder (webm/opus) until **Stop**.

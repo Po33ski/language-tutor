@@ -18,10 +18,18 @@ from app.agent.transcript import (
     to_chat_messages,
 )
 from app.agent.wrapup import end_lesson
-from app.api.deps import LessonLocksDep, SettingsDep, StoreDep, SummarizerDep, TutorDep
+from app.api.deps import (
+    LessonLocksDep,
+    ModeratorDep,
+    SettingsDep,
+    StoreDep,
+    SummarizerDep,
+    TutorDep,
+)
 from app.api.security import CurrentUserDep, daily_quota, rate_limited
 from app.auth.store import User
 from app.config import Settings
+from app.safety.moderation import BLOCKED_MESSAGES
 from app.storage import memory
 from app.storage.memory import Lesson
 
@@ -173,13 +181,15 @@ async def send_message(
     tutor: TutorDep,
     locks: LessonLocksDep,
     settings: SettingsDep,
+    moderator: ModeratorDep,
 ) -> StreamingResponse:
     """Run one tutor turn and stream it as server-sent events.
 
     Events: `token` {text}, `mistake` {original, corrected, explanation},
     `vocabulary` {word, meaning, example}, `time_up` {} (this reply was the tutor's
     closing message: the lesson's time is over, so the client ends the lesson),
-    `error` {message}, `done` {}.
+    `blocked` {message, category} (moderation stopped the learner's message: the tutor
+    never saw it and it is not part of the lesson), `error` {message}, `done` {}.
     """
     lesson = await _require_lesson(store, lesson_id, user)
     if lesson.status != memory.LessonStatus.ACTIVE:
@@ -191,6 +201,20 @@ async def send_message(
     is_kickoff = body.content is None
     if not is_kickoff and not body.content.strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Message is empty")
+    if not is_kickoff and moderator is not None:
+        verdict = await moderator.check(body.content)
+        if not verdict.allowed:
+            # The text itself is not logged: category and scores are enough to review.
+            logger.warning(
+                "Blocked a message in lesson %s (account %s): %s %s",
+                lesson_id,
+                user.id,
+                verdict.category,
+                {label: round(score, 2) for label, score in verdict.scores.items()},
+            )
+            blocked = {"message": BLOCKED_MESSAGES[verdict.category], "category": verdict.category}
+            events = [_sse("blocked", blocked), _sse("done", {})]
+            return StreamingResponse(iter(events), media_type="text/event-stream")
     config = thread_config(lesson_id)
 
     async def stream() -> AsyncIterator[str]:

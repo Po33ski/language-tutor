@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     # Kokoro voice; the first letter is the accent: "a" = American, "b" = British.
     tts_voice: str = "af_heart"
 
+    # Moderation: a local toxicity classifier (Hugging Face) checks every learner message
+    # before the tutor sees it; threats, hate, sexual messages and targeted insults are
+    # blocked (app/safety/moderation.py).
+    moderation_enabled: bool = True
+    moderation_model: str = "unitary/unbiased-toxic-roberta"
+
     @property
     def checkpoints_db_path(self) -> Path:
         return self.data_dir / "checkpoints.db"

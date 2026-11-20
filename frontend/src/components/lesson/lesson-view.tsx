@@ -79,6 +79,8 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
       let reply = "";
       // Set when this reply is the tutor's closing message (the time is over).
       let closing = false;
+      // Set when moderation stopped the learner's message.
+      let blocked: string | null = null;
       // Read the reply aloud while it streams: each finished sentence is queued at once.
       const voice = voiceEnabledRef.current ? startStream() : null;
       let unspoken = "";
@@ -98,11 +100,19 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
           onTimeUp: () => {
             closing = true;
           },
+          onBlocked: (message) => {
+            blocked = message;
+          },
         });
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : "The tutor could not answer.");
       } finally {
         if (reply) setMessages((previous) => [...previous, { role: "assistant", content: reply }]);
+        if (blocked !== null) {
+          // The message was not sent: take its bubble back out and say why.
+          setMessages((previous) => previous.slice(0, -1));
+          setError(blocked);
+        }
         setDraft(null);
         if (voice) {
           voice.push(unspoken);

@@ -137,6 +137,8 @@ export interface TutorTurnHandlers {
   onVocabulary: (item: VocabularyItem) => void;
   /** The reply was the tutor's closing message: the lesson's time is over. */
   onTimeUp: () => void;
+  /** Moderation stopped the learner's message; the tutor never saw it. */
+  onBlocked: (message: string) => void;
 }
 
 /**
@@ -193,6 +195,9 @@ function handleEvent(block: string, handlers: TutorTurnHandlers): void {
       break;
     case "time_up":
       handlers.onTimeUp();
+      break;
+    case "blocked":
+      handlers.onBlocked(payload.message);
       break;
     case "error":
       throw new ApiError(500, payload.message);

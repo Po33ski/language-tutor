@@ -19,6 +19,7 @@ from app.api.auth import AuthLimiters
 from app.api.security import RateLimiter
 from app.auth.store import UserStore
 from app.config import Settings, get_settings
+from app.safety.moderation import LocalModerator, Moderator
 from app.speech.service import DefaultSpeechService, SpeechService
 from app.storage.persistence import open_persistence
 
@@ -30,6 +31,7 @@ def create_app(
     model: BaseChatModel | None = None,
     summarizer: Summarizer | None = None,
     speech_service: SpeechService | None = None,
+    moderator: Moderator | None = None,
 ) -> FastAPI:
     """Build the app. Tests pass their own settings (temp data dir) and fakes for the models."""
     settings = settings or get_settings()
@@ -64,8 +66,11 @@ def create_app(
             app.state.speech = speech_service or (
                 DefaultSpeechService(settings) if settings.speech_enabled else None
             )
+            app.state.moderator = moderator or (
+                LocalModerator(settings.moderation_model) if settings.moderation_enabled else None
+            )
             # Background jobs, so startup is not delayed: summarize lessons left open last
-            # time, and load the speech models.
+            # time, and load the speech and moderation models.
             background = [
                 asyncio.create_task(
                     _end_stale_lessons(app, timedelta(hours=settings.stale_lesson_hours))
@@ -73,6 +78,8 @@ def create_app(
             ]
             if app.state.speech is not None:
                 background.append(asyncio.create_task(_warm_up_speech(app.state.speech)))
+            if app.state.moderator is not None:
+                background.append(asyncio.create_task(_warm_up_moderator(app.state.moderator)))
             yield
             for task in background:
                 task.cancel()
@@ -119,3 +126,10 @@ async def _warm_up_speech(speech_service: SpeechService) -> None:
         await speech_service.warm_up()
     except Exception:
         logger.exception("Loading speech models failed; speech requests will retry")
+
+
+async def _warm_up_moderator(moderator: Moderator) -> None:
+    try:
+        await moderator.warm_up()
+    except Exception:
+        logger.exception("Loading the moderation model failed; checks will retry")

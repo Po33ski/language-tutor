@@ -92,6 +92,7 @@ One learner profile per account.
 | `vocabulary` | `{word, meaning, example}` | A new word or phrase. |
 | `error` | `{message}` | The turn failed. |
 | `time_up` | `{}` | The lesson's time was over, so this reply was the tutor's goodbye; the client ends the lesson. |
+| `blocked` | `{message, category}` | Moderation stopped the learner's message (see [Moderation](#moderation)): the tutor never saw it and it is not stored. Followed by `done`. |
 | `done` | `{}` | The turn is complete. |
 
 Sending `content: null` **starts the lesson**: the tutor greets the learner and asks the first question.
@@ -180,6 +181,7 @@ These two are `TypedDict`s rather than Pydantic classes, because they are part o
   | `/end` | Claude Haiku 5.5 | Summaries; `medium` effort. |
   | `/speech/transcribe` | Whisper `large-v3-turbo` | Locally on the GPU, or hosted by Groq (`STT_PROVIDER=groq`, used on the server) with local Whisper as the fallback. |
   | `/speech/synthesize` | Kokoro-82M | Self-hosted: GPU locally, CPU on the server. |
+  | `/messages` (before the tutor) | `unitary/unbiased-toxic-roberta` | Moderation; self-hosted on the CPU, about 30 ms per message. |
 
 - **Where data is stored:**
   - Profiles, lessons and progress are long-term memory, in `backend/data/memory.db` (LangGraph Store).
@@ -188,6 +190,19 @@ These two are `TypedDict`s rather than Pydantic classes, because they are part o
 - **Admin commands** (reset a password, link a profile from before accounts existed): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#accounts).
 - **Shared dependencies:** endpoints do not create the database, the agent or the speech models themselves. They receive them through FastAPI's `Depends` (see [`deps.py`](backend/app/api/deps.py)), which lets tests swap in fake models without calling paid APIs.
 - **Frontend types:** the frontend does not define these models by hand. `npm run gen:api` generates TypeScript types from the backend's OpenAPI schema, so both sides always match.
+
+### Moderation
+
+Every learner message, typed or spoken, is checked before the tutor sees it ([`moderation.py`](backend/app/safety/moderation.py)). A blocked message is not sent to the tutor and not stored; the learner sees why it was not sent.
+
+- **Classifier:** [`unitary/unbiased-toxic-roberta`](https://huggingface.co/unitary/unbiased-toxic-roberta), the "unbiased" [Detoxify](https://github.com/unitaryai/detoxify) model, downloaded from Hugging Face on the first start (≈ 500 MB) and run in the backend on the CPU. About 30 ms per message, free, and the text does not leave the server for the check. It is trained on English, which is what learners write in the app.
+- **What is blocked:** threats, attacks on a group of people, sexual messages, and insults aimed at someone ("you idiot", "you are a stupid bot").
+- **What goes through:** swearing out of frustration ("this is so damn hard"), insults not aimed at anyone ("this exercise is stupid"), and quoted words ("what does 'damn' mean?"): quoted text is mentioned, not used, so it is left out of the check. The tutor's prompt tells it to answer rudeness calmly and to explain rude words neutrally.
+- **Thresholds:** threat ≥ 0.7, identity attack ≥ 0.5, sexual ≥ 0.2, severe toxicity ≥ 0.5, insult ≥ 0.9 when the message addresses someone ("you are…", "…, you idiot"). They were picked on 37 typical learner messages (all classified as intended); borderline cases still happen, e.g. a threat phrased like an idiom.
+- **If the check fails** (for example, the model is still downloading), the message goes through and the error is logged, so a broken check never stops a lesson. Blocked messages are logged with their category and scores, not their text.
+- **Turning it off:** `MODERATION_ENABLED=false`.
+
+**Alternative: an LLM classifier.** The local model can be replaced with a classifier on an LLM, e.g. a short Claude Haiku call with structured output that returns the category. It understands context better (sarcasm, threats without threatening words, the difference between a question about a word and an insult) and other languages, including Polish, but it adds about 0.5–1 s of delay to every message, on top of the tutor's reply, and a small cost per message (≈ $0.00006 with Haiku 5.5). To switch, implement the `Moderator` protocol in `moderation.py` with an LLM call and pass it to `create_app`.
 
 ## Configuration
 
@@ -204,6 +219,7 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `GROQ_API_KEY` / `GROQ_STT_MODEL` | – / `whisper-large-v3-turbo` | Groq API key ([console.groq.com](https://console.groq.com/keys)) and model, used when `STT_PROVIDER=groq`. |
 | `WHISPER_MODEL` / `WHISPER_DEVICE` | `large-v3-turbo` / `auto` | Local speech-to-text model and device (`auto`, `cuda`, `cpu`). |
 | `TTS_VOICE` | `af_heart` | Kokoro voice; the first letter is the accent (`a` = American, `b` = British). |
+| `MODERATION_ENABLED` / `MODERATION_MODEL` | `true` / `unitary/unbiased-toxic-roberta` | Checks every learner message before the tutor sees it (see [Moderation](#moderation)). |
 | `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | `30` / `90` | A session ends after this many idle days, and after the maximum in any case. |
 | `PASSWORD_BREACH_CHECK` | `true` | Reject passwords known from breaches (Have I Been Pwned; only 5 characters of the SHA-1 hash leave the server). |
 | `USER_DAILY_TUTOR_TURNS` / `DAILY_TUTOR_TURNS_TOTAL` | `200` / `2000` | Tutor turns per account and for the whole app per UTC day; `0` = unlimited. |

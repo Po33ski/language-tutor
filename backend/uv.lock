@@ -1544,6 +1544,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "soundfile" },
+    { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1584,6 +1585,7 @@ requires-dist = [
     { name = "soundfile", specifier = ">=0.14.0" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.15.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "language-tutor-backend", extra = "cpu" } },
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.15.0" },
+    { name = "transformers", specifier = ">=5.23" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
 provides-extras = ["gpu", "cpu"]
