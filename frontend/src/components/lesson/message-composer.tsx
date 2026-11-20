@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import { buttonPrimary, buttonSecondary, errorText, input } from "@/components/ui";
+import { MicIcon, SendIcon, StopIcon } from "@/components/icons";
+import { errorText } from "@/components/ui";
 import { useRecorder } from "@/hooks/use-recorder";
 import { api } from "@/lib/api/client";
 
@@ -33,7 +34,7 @@ export function MessageComposer({ disabled, onSend, onRecordingStart }: MessageC
       try {
         await start();
       } catch {
-        setVoiceError("Microphone is not available. Check the browser's permission.");
+        setVoiceError("The microphone is not available. Allow it in your browser settings.");
       }
       return;
     }
@@ -46,56 +47,78 @@ export function MessageComposer({ disabled, onSend, onRecordingStart }: MessageC
         // Spoken answers go straight to the tutor, like in a real conversation.
         onSend(text);
       } else {
-        setVoiceError("I didn't catch that. Try again a bit louder.");
+        setVoiceError("No speech was heard. Try again a bit louder.");
       }
     } catch {
-      setVoiceError("Could not understand the recording. Try again.");
+      setVoiceError("The recording could not be understood. Try again.");
     } finally {
       setTranscribing(false);
     }
   }
 
   return (
-    <div className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-      {voiceError ? <p className={errorText}>{voiceError}</p> : null}
-      <form
-        className="flex items-end gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          send();
-        }}
-      >
-        <textarea
-          className={`${input} max-h-40 resize-none`}
-          rows={2}
-          value={value}
-          maxLength={4000}
-          placeholder={
-            recording
-              ? "Listening… click Stop when you finish speaking."
-              : "Speak or write your answer in English… (Enter to send)"
-          }
-          disabled={recording || transcribing}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              send();
-            }
+    <div className="border-t border-line bg-paper lg:border-t-0">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-6">
+        {voiceError ? (
+          <p className={`${errorText} px-1`} role="alert">
+            {voiceError}
+          </p>
+        ) : null}
+        <form
+          className="flex items-end gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            send();
           }}
-        />
-        {/* Actions on the right, where development overlays never cover them. */}
-        <MicButton
-          recording={recording}
-          transcribing={transcribing}
-          // A recording in progress can always be stopped, even if the tutor started typing.
-          disabled={!recording && (disabled || transcribing)}
-          onClick={toggleRecording}
-        />
-        <button type="submit" className={buttonPrimary} disabled={!canSend}>
-          Send
-        </button>
-      </form>
+        >
+          <div
+            className={`flex min-w-0 flex-1 rounded-[24px] border transition-colors ${
+              recording
+                ? "border-fern bg-fern-soft"
+                : "border-line bg-paper focus-within:border-fern focus-within:ring-3 focus-within:ring-fern/15"
+            }`}
+          >
+            <textarea
+              className="block max-h-40 min-h-12 w-full resize-none field-sizing-content bg-transparent px-4 py-3 text-base leading-normal outline-none placeholder:text-muted/80 disabled:cursor-not-allowed"
+              rows={1}
+              value={value}
+              maxLength={4000}
+              aria-label="Your answer"
+              placeholder={
+                recording
+                  ? "Listening…"
+                  : transcribing
+                    ? "Transcribing…"
+                    : "Speak or type your answer"
+              }
+              disabled={recording || transcribing}
+              onChange={(event) => setValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  send();
+                }
+              }}
+            />
+          </div>
+          {/* Actions on the right, where development overlays never cover them. */}
+          <MicButton
+            recording={recording}
+            transcribing={transcribing}
+            // A recording in progress can always be stopped, even if the tutor started typing.
+            disabled={!recording && (disabled || transcribing)}
+            onClick={toggleRecording}
+          />
+          <button
+            type="submit"
+            className="inline-flex size-12 shrink-0 items-center justify-center rounded-full bg-ink text-paper transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
+            disabled={!canSend}
+            aria-label="Send"
+          >
+            <SendIcon />
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -118,27 +141,21 @@ function MicButton({
       onClick={onClick}
       disabled={disabled}
       aria-pressed={recording}
-      className={
-        recording
-          ? "inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500"
-          : `${buttonSecondary} shrink-0 gap-2`
-      }
+      aria-label={label}
+      className={`relative inline-flex h-12 min-w-12 shrink-0 items-center justify-center gap-2 rounded-full px-3.5 text-[15px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:px-5 ${
+        recording ? "bg-ink text-paper" : "bg-fern text-paper hover:opacity-90"
+      }`}
     >
       {recording ? (
-        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-white" aria-hidden />
-      ) : (
-        <MicIcon />
-      )}
-      {label}
+        <span
+          className="absolute inset-0 rounded-full ring-4 ring-fern/40 motion-safe:animate-pulse"
+          aria-hidden
+        />
+      ) : null}
+      {recording ? <StopIcon /> : <MicIcon />}
+      <span className="hidden sm:inline" aria-hidden>
+        {label}
+      </span>
     </button>
-  );
-}
-
-function MicIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <rect x="9" y="3" width="6" height="12" rx="3" />
-      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-    </svg>
   );
 }

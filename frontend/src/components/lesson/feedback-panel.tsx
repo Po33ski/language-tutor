@@ -1,4 +1,4 @@
-import { card } from "@/components/ui";
+import { CheckIcon } from "@/components/icons";
 import type { Mistake, VocabularyItem } from "@/lib/api/client";
 
 interface FeedbackPanelProps {
@@ -8,44 +8,47 @@ interface FeedbackPanelProps {
 
 export function FeedbackPanel({ mistakes, vocabulary }: FeedbackPanelProps) {
   return (
-    <div className="flex flex-col gap-6">
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-          Corrections ({mistakes.length})
+    <div className="flex flex-col gap-8 px-5 py-6">
+      <section className="flex flex-col gap-2">
+        <h2 className="flex items-baseline gap-2 text-[17px] font-bold">
+          Corrections <span className="text-sm font-normal text-muted">{mistakes.length}</span>
         </h2>
         {mistakes.length === 0 ? (
-          <p className="text-sm text-zinc-500">No corrections yet. Keep talking!</p>
+          <p className="text-sm text-muted">Corrections appear here as you talk.</p>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col divide-y divide-line">
             {/* Newest first, so the latest correction is always visible. */}
             {mistakes.toReversed().map((mistake, index) => (
-              <li key={mistakes.length - index} className={`${card} flex flex-col gap-1 text-sm`}>
-                <span className="text-red-600 line-through decoration-red-400 dark:text-red-400">
+              <li key={mistakes.length - index} className="flex flex-col gap-1 py-3">
+                <span className="text-[15px] text-muted line-through decoration-muted/70">
                   {mistake.original}
                 </span>
-                <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                <span className="flex items-start gap-1.5 text-[15px] font-semibold text-fern">
+                  <CheckIcon className="mt-[3px] size-4 shrink-0" />
                   {mistake.corrected}
                 </span>
-                <span className="text-zinc-600 dark:text-zinc-400">{mistake.explanation}</span>
+                <span className="text-sm leading-relaxed text-muted">{mistake.explanation}</span>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-          Vocabulary ({vocabulary.length})
+      <section className="flex flex-col gap-2">
+        <h2 className="flex items-baseline gap-2 text-[17px] font-bold">
+          Vocabulary <span className="text-sm font-normal text-muted">{vocabulary.length}</span>
         </h2>
         {vocabulary.length === 0 ? (
-          <p className="text-sm text-zinc-500">New words from the lesson will appear here.</p>
+          <p className="text-sm text-muted">New words from the lesson appear here.</p>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col divide-y divide-line">
             {vocabulary.toReversed().map((item, index) => (
-              <li key={vocabulary.length - index} className={`${card} flex flex-col gap-1 text-sm`}>
-                <span className="font-medium">{item.word}</span>
-                <span className="text-zinc-600 dark:text-zinc-400">{item.meaning}</span>
-                <span className="italic text-zinc-500">“{item.example}”</span>
+              <li key={vocabulary.length - index} className="flex flex-col gap-1 py-3">
+                <span className="text-[15px] font-bold">{item.word}</span>
+                <span className="text-sm leading-relaxed">{item.meaning}</span>
+                <span className="text-sm italic leading-relaxed text-muted">
+                  &ldquo;{item.example}&rdquo;
+                </span>
               </li>
             ))}
           </ul>

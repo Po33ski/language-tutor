@@ -1,15 +1,32 @@
 // Shared Tailwind class names, so pages look consistent without a component library.
+// Colors come from the tokens in `app/globals.css` (paper, ink, surface, line, muted,
+// fern, danger). Radius follows the role: pills for actions, rounded-xl for fields,
+// rounded-3xl for large surfaces.
 
 export const buttonPrimary =
-  "inline-flex items-center justify-center rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300";
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-ink px-5 text-[15px] font-semibold text-paper transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40";
 
 export const buttonSecondary =
-  "inline-flex items-center justify-center rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800";
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-line px-5 text-[15px] font-semibold text-ink transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40";
+
+/** Round, icon-only button (give it an `aria-label`). */
+export const iconButton =
+  "inline-flex size-11 shrink-0 items-center justify-center rounded-full text-ink transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40";
 
 export const input =
-  "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-zinc-800";
+  "w-full rounded-xl border border-line bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition-colors placeholder:text-muted/80 focus:border-fern focus:ring-3 focus:ring-fern/15 disabled:opacity-60";
 
-export const card =
-  "rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900";
+export const fieldLabel = "text-[15px] font-semibold";
 
-export const errorText = "text-sm text-red-600 dark:text-red-400";
+export const hint = "text-sm text-muted";
+
+/** A quiet grey panel; content sits on it without borders or shadows. */
+export const panel = "rounded-3xl bg-surface p-5 sm:p-6";
+
+export const pageTitle = "text-3xl font-bold leading-tight tracking-[-0.02em] sm:text-4xl";
+
+export const sectionTitle = "text-xl font-bold tracking-[-0.01em]";
+
+export const errorText = "text-sm text-danger";
+
+export const textLink = "font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-ink";

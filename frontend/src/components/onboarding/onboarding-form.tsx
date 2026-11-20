@@ -4,17 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { buttonPrimary, buttonSecondary, card, errorText, input } from "@/components/ui";
+import { buttonPrimary, buttonSecondary, errorText, fieldLabel, input, panel } from "@/components/ui";
 import { useAccount } from "@/components/auth/auth-gate";
 import { api, type EnglishLevel } from "@/lib/api/client";
 
 const LEVELS: { value: EnglishLevel; label: string }[] = [
-  { value: "A1", label: "A1 — Beginner" },
-  { value: "A2", label: "A2 — Elementary" },
-  { value: "B1", label: "B1 — Intermediate" },
-  { value: "B2", label: "B2 — Upper intermediate" },
-  { value: "C1", label: "C1 — Advanced" },
-  { value: "C2", label: "C2 — Proficient" },
+  { value: "A1", label: "Beginner" },
+  { value: "A2", label: "Elementary" },
+  { value: "B1", label: "Intermediate" },
+  { value: "B2", label: "Upper intermediate" },
+  { value: "C1", label: "Advanced" },
+  { value: "C2", label: "Proficient" },
 ];
 
 const TOPIC_SUGGESTIONS = [
@@ -60,9 +60,9 @@ export function OnboardingForm() {
   // `saving` stays true after a successful submit, while the page moves home.
   if (account.has_profile && !saving) {
     return (
-      <div className={`${card} flex flex-col gap-3 text-sm`}>
+      <div className={`${panel} flex flex-col items-start gap-4`}>
         <p>Your profile is already set up.</p>
-        <Link href="/" className={`${buttonSecondary} self-start`}>
+        <Link href="/" className={buttonSecondary}>
           Go to your lessons
         </Link>
       </div>
@@ -70,7 +70,7 @@ export function OnboardingForm() {
   }
 
   return (
-    <form onSubmit={submit} className={`${card} flex flex-col gap-5`}>
+    <form onSubmit={submit} className="flex flex-col gap-8">
       <Field label="Your name" htmlFor="name">
         <input
           id="name"
@@ -83,20 +83,30 @@ export function OnboardingForm() {
         />
       </Field>
 
-      <Field label="Your English level" htmlFor="level">
-        <select
-          id="level"
-          className={input}
-          value={level}
-          onChange={(event) => setLevel(event.target.value as EnglishLevel)}
-        >
+      <fieldset>
+        <legend className={`${fieldLabel} mb-3`}>Your English level</legend>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {LEVELS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
+            <label
+              key={option.value}
+              className="group flex cursor-pointer flex-col rounded-xl border border-line px-3.5 py-3 transition-colors hover:bg-surface has-checked:border-ink has-checked:bg-ink has-checked:text-paper has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-fern"
+            >
+              <input
+                type="radio"
+                name="level"
+                value={option.value}
+                checked={level === option.value}
+                onChange={() => setLevel(option.value)}
+                className="sr-only"
+              />
+              <span className="text-lg font-bold">{option.value}</span>
+              <span className="text-sm text-muted group-has-checked:text-paper/75">
+                {option.label}
+              </span>
+            </label>
           ))}
-        </select>
-      </Field>
+        </div>
+      </fieldset>
 
       <Field label="What do you want to practice?" htmlFor="main-topic">
         <input
@@ -109,23 +119,31 @@ export function OnboardingForm() {
           placeholder="e.g. Job interview preparation"
         />
         <div className="flex flex-wrap gap-2">
-          {TOPIC_SUGGESTIONS.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              onClick={() => setMainTopic(suggestion)}
-              className="rounded-full border border-zinc-300 px-3 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            >
-              {suggestion}
-            </button>
-          ))}
+          {TOPIC_SUGGESTIONS.map((suggestion) => {
+            const selected = mainTopic === suggestion;
+            return (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => setMainTopic(suggestion)}
+                aria-pressed={selected}
+                className={`min-h-9 rounded-full border px-3.5 text-sm transition-colors ${
+                  selected
+                    ? "border-ink bg-ink text-paper"
+                    : "border-line hover:bg-surface"
+                }`}
+              >
+                {suggestion}
+              </button>
+            );
+          })}
         </div>
       </Field>
 
       <Field label="Your goal (optional)" htmlFor="goal">
         <textarea
           id="goal"
-          className={input}
+          className={`${input} resize-none`}
           value={goal}
           onChange={(event) => setGoal(event.target.value)}
           maxLength={500}
@@ -137,7 +155,7 @@ export function OnboardingForm() {
       <Field label="Anything the tutor should know? (optional)" htmlFor="notes">
         <textarea
           id="notes"
-          className={input}
+          className={`${input} resize-none`}
           value={notes}
           onChange={(event) => setNotes(event.target.value)}
           maxLength={500}
@@ -147,7 +165,7 @@ export function OnboardingForm() {
       </Field>
 
       {error ? <p className={errorText}>{error}</p> : null}
-      <button type="submit" className={`${buttonPrimary} self-start`} disabled={saving}>
+      <button type="submit" className={`${buttonPrimary} w-full sm:w-auto sm:self-start`} disabled={saving}>
         {saving ? "Saving…" : "Create profile"}
       </button>
     </form>
@@ -164,8 +182,8 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <label htmlFor={htmlFor} className="text-sm font-medium">
+    <div className="flex flex-col gap-3">
+      <label htmlFor={htmlFor} className={fieldLabel}>
         {label}
       </label>
       {children}

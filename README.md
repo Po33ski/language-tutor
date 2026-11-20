@@ -48,7 +48,7 @@ The backend exposes **16 endpoints** in 5 groups (routers), all under the `/api`
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/health` | Checks that the backend is alive and returns `{"status": "ok"}`. Used by the "Backend online" indicator. |
+| `GET /api/health` | Checks that the backend is alive and returns `{"status": "ok"}`. The home screen uses it to warn when the server cannot be reached. |
 
 Every endpoint except health, signup and login requires a session: `Authorization: Bearer <token>`, with the token from signup or login. Profiles and lessons are always the signed-in account's own; someone else's lesson answers 404.
 

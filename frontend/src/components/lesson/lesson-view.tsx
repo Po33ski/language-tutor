@@ -3,11 +3,18 @@
 import Link from "next/link";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  ChevronLeftIcon,
+  CloseIcon,
+  NotesIcon,
+  SpeakerIcon,
+  SpeakerOffIcon,
+} from "@/components/icons";
 import { FeedbackPanel } from "@/components/lesson/feedback-panel";
 import { LessonSummaryCard } from "@/components/lesson/lesson-summary-card";
 import { MessageComposer } from "@/components/lesson/message-composer";
 import { MessageList } from "@/components/lesson/message-list";
-import { buttonSecondary, card, errorText } from "@/components/ui";
+import { buttonPrimary, buttonSecondary, errorText, iconButton } from "@/components/ui";
 import { useSpeaker } from "@/hooks/use-speaker";
 import {
   api,
@@ -34,6 +41,9 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  // How many notes (corrections + words) the learner has seen in the mobile notes sheet.
+  const [seenNotes, setSeenNotes] = useState(0);
   const voiceEnabled = useVoiceEnabled();
   const { speak, startStream, stop: stopSpeaking, speakingText } = useSpeaker();
 
@@ -90,6 +100,8 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
         setMessages(detail.messages);
         setMistakes(detail.mistakes);
         setVocabulary(detail.vocabulary);
+        // Notes from before this page load are not news.
+        setSeenNotes(detail.mistakes.length + detail.vocabulary.length);
         const isNew = detail.messages.length === 0 && detail.lesson.status === "active";
         if (isNew && !kickoffRequested.has(lessonId)) {
           kickoffRequested.add(lessonId);
@@ -127,41 +139,87 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
     setVoiceEnabled(!voiceEnabled);
   }
 
+  const noteCount = mistakes.length + vocabulary.length;
+
+  function openNotes() {
+    setSeenNotes(noteCount);
+    setNotesOpen(true);
+  }
+
+  const closeNotes = useCallback(() => setNotesOpen(false), []);
+
   const isActive = lesson?.status === "active";
 
   return (
-    <main className="mx-auto flex h-dvh w-full max-w-6xl flex-col gap-4 px-4 py-4">
-      <header className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <Link href="/" className="text-sm text-zinc-500 hover:underline">
-            ← Back
+    <main className="flex h-dvh flex-col">
+      <header className="border-b border-line">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-1 px-2 sm:gap-2 sm:px-4">
+          <Link href="/" className={iconButton} aria-label="Back to your lessons">
+            <ChevronLeftIcon />
           </Link>
-          <h1 className="truncate text-xl font-semibold">{lesson?.topic ?? "Lesson"}</h1>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <h1 className="truncate text-[17px] font-bold leading-tight tracking-[-0.01em]">
+              {lesson?.topic ?? "Lesson"}
+            </h1>
+            <p className="truncate text-sm text-muted">
+              {lesson === null
+                ? " "
+                : isActive
+                  ? "Lesson in progress"
+                  : lesson.status === "summarized"
+                    ? "Lesson completed"
+                    : "Lesson ended"}
+            </p>
+          </div>
           <button
             type="button"
-            className={buttonSecondary}
+            className={`${iconButton} sm:w-auto sm:gap-2 sm:px-3.5 sm:text-[15px] sm:font-semibold`}
             onClick={toggleVoice}
             aria-pressed={voiceEnabled}
+            aria-label={voiceEnabled ? "Voice on" : "Voice off"}
             title="Read the tutor's replies aloud"
           >
-            {voiceEnabled ? "Voice on" : "Voice off"}
+            {voiceEnabled ? <SpeakerIcon /> : <SpeakerOffIcon className="size-5 text-muted" />}
+            <span className="hidden sm:inline">{voiceEnabled ? "Voice on" : "Voice off"}</span>
+          </button>
+          <button
+            type="button"
+            className={`${iconButton} relative lg:hidden`}
+            onClick={openNotes}
+            aria-label={`Corrections and vocabulary (${noteCount})`}
+          >
+            <NotesIcon />
+            {noteCount > seenNotes ? (
+              <span className="absolute right-2 top-2 size-2.5 rounded-full bg-fern ring-2 ring-paper" />
+            ) : null}
           </button>
           {isActive ? (
             <button
               type="button"
-              className={buttonSecondary}
+              className={`${buttonSecondary} min-h-10 px-3.5 text-sm sm:px-4`}
               onClick={endLesson}
               disabled={draft !== null || ending}
+              aria-label={ending ? "Summarizing…" : "End lesson"}
             >
-              {ending ? "Summarizing…" : "End lesson"}
+              {/* Short label on phones, so the lesson title keeps some room. */}
+              {ending ? (
+                "Summarizing…"
+              ) : (
+                <>
+                  <span className="sm:hidden" aria-hidden>
+                    End
+                  </span>
+                  <span className="hidden sm:inline" aria-hidden>
+                    End lesson
+                  </span>
+                </>
+              )}
             </button>
           ) : null}
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="mx-auto grid min-h-0 w-full max-w-6xl flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section className="flex min-h-0 flex-col" aria-busy={draft !== null}>
           <MessageList
             messages={messages}
@@ -169,8 +227,21 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
             speakingText={speakingText}
             onPlay={speak}
             onStop={stopSpeaking}
-          />
-          {error ? <p className={`${errorText} pb-2`}>{error}</p> : null}
+            scrollKey={`${ending}-${lesson?.status}`}
+          >
+            {ending ? (
+              <p className="rounded-3xl bg-surface p-5 text-muted" role="status">
+                Writing your lesson summary…
+              </p>
+            ) : lesson?.summary ? (
+              <LessonSummaryCard summary={lesson.summary} />
+            ) : null}
+          </MessageList>
+          {error ? (
+            <p className={`${errorText} mx-auto w-full max-w-2xl px-4 pb-2 sm:px-6`} role="alert">
+              {error}
+            </p>
+          ) : null}
           {lesson && !isActive ? (
             <LessonEndedNote discarded={lesson.status === "discarded"} />
           ) : (
@@ -181,29 +252,87 @@ export function LessonView({ params }: { params: Promise<{ id: string }> }) {
             />
           )}
         </section>
-        <aside className="flex min-h-0 flex-col gap-6 overflow-y-auto">
-          {ending ? (
-            <p className={`${card} text-sm text-zinc-500`}>Summarizing your lesson…</p>
-          ) : null}
-          {lesson?.summary ? <LessonSummaryCard summary={lesson.summary} /> : null}
+        <aside className="hidden min-h-0 overflow-y-auto border-l border-line lg:block">
           <FeedbackPanel mistakes={mistakes} vocabulary={vocabulary} />
         </aside>
       </div>
+
+      <NotesSheet open={notesOpen} onClose={closeNotes}>
+        <FeedbackPanel mistakes={mistakes} vocabulary={vocabulary} />
+      </NotesSheet>
     </main>
+  );
+}
+
+/** Corrections and vocabulary on small screens: a bottom sheet over the conversation. */
+function NotesSheet({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    if (!open && dialog.open) dialog.close();
+  }, [open]);
+
+  // On wide screens the notes have their own column and the sheet is hidden; an open
+  // modal dialog would still block the page, so close it when the window gets wide.
+  useEffect(() => {
+    if (!open) return;
+    const wide = window.matchMedia("(min-width: 64rem)");
+    const closeIfWide = () => {
+      if (wide.matches) onClose();
+    };
+    closeIfWide();
+    wide.addEventListener("change", closeIfWide);
+    return () => wide.removeEventListener("change", closeIfWide);
+  }, [open, onClose]);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      onClose={onClose}
+      // A click on the backdrop lands on the dialog element itself.
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      aria-labelledby="notes-title"
+      className="mb-0 mt-auto max-h-[85dvh] w-full max-w-none rounded-t-3xl bg-paper text-ink backdrop:bg-black/40 lg:hidden"
+    >
+      <div className="sticky top-0 flex items-center justify-between border-b border-line bg-paper py-2 pl-5 pr-2">
+        <h2 id="notes-title" className="text-[17px] font-bold">
+          Your notes
+        </h2>
+        <button type="button" className={iconButton} onClick={onClose} aria-label="Close">
+          <CloseIcon />
+        </button>
+      </div>
+      <div className="pb-[env(safe-area-inset-bottom)]">{children}</div>
+    </dialog>
   );
 }
 
 function LessonEndedNote({ discarded }: { discarded: boolean }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-3 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
-      <span>
-        {discarded
-          ? "This lesson ended before you wrote anything, so there is no summary."
-          : "This lesson has ended. Your summary is saved for future lessons."}
-      </span>
-      <Link href="/" className={buttonSecondary}>
-        Start a new lesson
-      </Link>
+    <div className="border-t border-line lg:border-t-0">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <p className="text-muted">
+          {discarded
+            ? "This lesson ended before you wrote anything, so there is no summary."
+            : "This lesson has ended. Its summary is saved for your next lessons."}
+        </p>
+        <Link href="/" className={`${buttonPrimary} shrink-0`}>
+          Start a new lesson
+        </Link>
+      </div>
     </div>
   );
 }

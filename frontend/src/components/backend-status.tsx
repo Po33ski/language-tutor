@@ -4,37 +4,23 @@ import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api/client";
 
-type Status = "checking" | "online" | "offline";
-
-const LABELS: Record<Status, string> = {
-  checking: "Checking backend…",
-  online: "Backend online",
-  offline: "Backend offline",
-};
-
-const DOT_COLORS: Record<Status, string> = {
-  checking: "bg-zinc-400",
-  online: "bg-emerald-500",
-  offline: "bg-red-500",
-};
-
+/** A warning that appears only when the server cannot be reached. */
 export function BackendStatus() {
-  const [status, setStatus] = useState<Status>("checking");
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    api.getHealth(controller.signal)
-      .then(() => setStatus("online"))
-      .catch(() => {
-        if (!controller.signal.aborted) setStatus("offline");
-      });
+    api.getHealth(controller.signal).catch(() => {
+      if (!controller.signal.aborted) setOffline(true);
+    });
     return () => controller.abort();
   }, []);
 
+  if (!offline) return null;
   return (
-    <p className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-      <span className={`h-2 w-2 rounded-full ${DOT_COLORS[status]}`} aria-hidden />
-      {LABELS[status]}
+    <p className="flex items-center gap-2 rounded-xl border border-line px-4 py-3 text-sm" role="status">
+      <span className="size-2 shrink-0 rounded-full bg-danger" aria-hidden />
+      Can&apos;t reach the server right now. Lessons won&apos;t start until it&apos;s back.
     </p>
   );
 }

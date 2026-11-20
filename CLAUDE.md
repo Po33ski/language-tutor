@@ -16,6 +16,7 @@ More detail lives in other docs:
 - **Skills:** use `.claude/skills/langgraph` for agent code and `.claude/skills/vercel-react-best-practices` for React/Next code (both in the repo, pinned in `skills-lock.json`). For CI/CD work (`.github/workflows/`, `deploy/`, `backend/Dockerfile`) use the `building-cicd-pipelines` skill.
   - `building-cicd-pipelines` is installed globally on the developer's machine (`~/.claude/skills/`), not in the repo: `npx skills add jeremylongshore/claude-code-plugins-plus-skills --skill building-cicd-pipelines --agent claude-code --copy --global`.
   - It is generic (it suggests staging, registries, Slack and so on). The settled design in `docs/DEPLOYMENT.md` wins: no staging, images built on the VM, no registry, deploy only from `main` after the checks pass.
+- **Visual design** (styling, layout, typography of the frontend): use the `frontend-design` skill (Anthropic), also installed globally: `npx skills add anthropics/claude-plugins-official --skill frontend-design --agent claude-code --copy --global`. It guides the look; `vercel-react-best-practices` still governs the React code.
 
 ## Product decisions (settled; do not re-ask)
 
@@ -135,6 +136,7 @@ More detail lives in other docs:
 |---|---|
 | Framework | **Next.js 16.4.6** (App Router, Turbopack, `cacheComponents` and `partialPrefetching` on). `next` and `eslint-config-next` are pinned to exact versions. |
 | UI | React 19.3, TypeScript 5 (`strict`), Tailwind CSS 4. No component library: shared class names live in `src/components/ui.ts`. |
+| Visual design | Black, white, grey and one green. Colors are CSS variables in `app/globals.css` (`paper`, `ink`, `surface`, `line`, `muted`, `fern`, `fern-soft`, `danger`) with a dark-mode set; use them as Tailwind colors (`bg-surface`, `text-fern`), never raw palette classes like `zinc-*`. Green means practice and progress only: the speak button, corrected wording, the progress note, a completed lesson. Font: Atkinson Hyperlegible Next (`next/font`, chosen for letter legibility). Sentence-case labels, no uppercase eyebrows; hairlines and grey surfaces instead of shadowed cards; pills for actions, `rounded-xl` for fields, `rounded-3xl` for large surfaces. |
 | API types | `openapi-typescript` generates `src/lib/api/schema.d.ts` from the backend's OpenAPI schema. Never hand-write API types. |
 | Browser APIs | `MediaRecorder` (webm/opus, mp4 fallback) for the mic; an `Audio` element for TTS playback |
 | Runtime | Node 22 |
@@ -146,7 +148,9 @@ More detail lives in other docs:
 | `app/page.tsx`, `app/onboarding/page.tsx`, `app/lesson/[id]/page.tsx` | Routes: home (the account's profile, progress, lessons), onboarding form, lesson |
 | `components/home/`, `components/onboarding/` | Home screen and onboarding form |
 | `components/lesson/` | `lesson-view` (orchestrates a lesson), `message-list` (bubbles + replay), `message-composer` (textarea, Speak/Stop, Send), `feedback-panel` (corrections + vocabulary), `lesson-summary-card` |
-| `components/backend-status.tsx` | The "Backend online" indicator |
+| `components/backend-status.tsx` | A warning on the home screen, shown only when the server cannot be reached |
+| `components/brand.tsx`, `components/icons.tsx` | The logo (`Wordmark`), the top bar of regular pages (`AppHeader`), inline SVG icons |
+| `components/lesson/lesson-view.tsx` layout | Wide screens: conversation + notes column. Below `lg`: the notes open as a bottom sheet (`<dialog>`) from the header, with a green dot for unseen notes. The lesson summary is shown at the end of the conversation. |
 | `hooks/use-recorder.ts`, `hooks/use-speaker.ts` | Mic recording; TTS playback. `useSpeaker` reads text sentence by sentence (`startStream().push/finish` while a reply streams, `speak` for replay): synthesis requests run one at a time in order, playback follows through one reused `<audio>` element, and a generation counter drops cancelled work |
 | `lib/sentences.ts` | `takeSentences` (split finished sentences off streamed text; skips short fragments and abbreviations like "Mr.") and `splitSentences` |
 | `lib/api/client.ts` | The `api` object (REST calls), `streamTutorTurn` (SSE parser), `ApiError` |

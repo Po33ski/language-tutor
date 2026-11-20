@@ -12,7 +12,8 @@ import {
 } from "react";
 
 import { AuthScreen } from "@/components/auth/auth-screen";
-import { buttonSecondary, card } from "@/components/ui";
+import { Wordmark } from "@/components/brand";
+import { buttonPrimary } from "@/components/ui";
 import { api, ApiError, type Account } from "@/lib/api/client";
 import { forgetLegacyStorage, setSessionToken, useSessionToken } from "@/lib/session";
 
@@ -92,13 +93,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (current === null) return <Pending />;
   if (current.status === "offline") {
     return (
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-4 px-4">
-        <p className={`${card} text-sm`}>
-          Could not reach the server. Check your connection and try again.
-        </p>
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-5 px-4">
+        <Wordmark />
+        <div className="flex flex-col gap-2">
+          <h1 className="text-2xl font-bold tracking-[-0.01em]">Can&apos;t reach the server</h1>
+          <p className="text-muted">Check your internet connection, then try again.</p>
+        </div>
         <button
           type="button"
-          className={`${buttonSecondary} self-start`}
+          className={`${buttonPrimary} self-start`}
           onClick={() => setAttempt((n) => n + 1)}
         >
           Try again
@@ -110,5 +113,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
 }
 
 function Pending() {
-  return <p className="m-auto text-sm text-zinc-500">Loading…</p>;
+  return (
+    <p className="m-auto text-sm text-muted" role="status">
+      Loading…
+    </p>
+  );
 }

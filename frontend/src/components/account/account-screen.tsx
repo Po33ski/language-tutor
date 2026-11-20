@@ -1,11 +1,20 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 
 import { useAccount } from "@/components/auth/auth-gate";
 import { MIN_PASSWORD_LENGTH } from "@/components/auth/auth-screen";
-import { buttonPrimary, buttonSecondary, card, errorText, input } from "@/components/ui";
+import { AppHeader } from "@/components/brand";
+import {
+  buttonPrimary,
+  buttonSecondary,
+  errorText,
+  fieldLabel,
+  hint,
+  input,
+  pageTitle,
+  sectionTitle,
+} from "@/components/ui";
 import { api, ApiError } from "@/lib/api/client";
 
 export function AccountScreen() {
@@ -18,35 +27,39 @@ export function AccountScreen() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-6 px-4 py-12">
-      <header className="flex flex-col gap-2">
-        <Link href="/" className="text-sm text-zinc-500 hover:underline">
-          ← Back
-        </Link>
-        <h1 className="text-2xl font-semibold tracking-tight">Your account</h1>
-        <p className="text-zinc-600 dark:text-zinc-400">
-          Signed in as <span className="font-medium">{account.email}</span> · member since{" "}
-          {new Date(account.created_at).toLocaleDateString()}
-        </p>
-      </header>
+    <>
+      <AppHeader />
+      {/* Same width as the header, so the content lines up with the logo. */}
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-4 pb-16 pt-8 sm:px-6 sm:pt-12 [&>*]:max-w-xl">
+        <header className="flex flex-col gap-2">
+          <h1 className={pageTitle}>Your account</h1>
+          <p className="text-[17px] text-muted">
+            Signed in as <span className="break-all font-semibold text-ink">{account.email}</span>
+          </p>
+          <p className={hint}>
+            Member since {new Date(account.created_at).toLocaleDateString()}
+          </p>
+        </header>
 
-      <ChangePasswordForm />
+        <ChangePasswordForm />
 
-      <section className={`${card} flex flex-col gap-3`}>
-        <h2 className="font-medium">Sign out</h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Ends the session on this device. Changing your password signs out all other devices.
-        </p>
-        <button
-          type="button"
-          className={`${buttonSecondary} self-start`}
-          onClick={handleSignOut}
-          disabled={signingOut}
-        >
-          {signingOut ? "Signing out…" : "Sign out"}
-        </button>
-      </section>
-    </main>
+        <section className="flex flex-col items-start gap-3 border-t border-line pt-8">
+          <h2 className={sectionTitle}>Sign out</h2>
+          <p className="text-muted">
+            Ends the session on this device. Changing your password signs out all other
+            devices.
+          </p>
+          <button
+            type="button"
+            className={buttonSecondary}
+            onClick={handleSignOut}
+            disabled={signingOut}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </section>
+      </main>
+    </>
   );
 }
 
@@ -77,10 +90,10 @@ function ChangePasswordForm() {
   }
 
   return (
-    <form onSubmit={submit} className={`${card} flex flex-col gap-4`}>
-      <h2 className="font-medium">Change password</h2>
+    <form onSubmit={submit} className="flex flex-col gap-5 border-t border-line pt-8">
+      <h2 className={sectionTitle}>Change password</h2>
       <div className="flex flex-col gap-2">
-        <label htmlFor="current-password" className="text-sm font-medium">
+        <label htmlFor="current-password" className={fieldLabel}>
           Current password
         </label>
         <input
@@ -94,7 +107,7 @@ function ChangePasswordForm() {
         />
       </div>
       <div className="flex flex-col gap-2">
-        <label htmlFor="new-password" className="text-sm font-medium">
+        <label htmlFor="new-password" className={fieldLabel}>
           New password
         </label>
         <input
@@ -107,7 +120,7 @@ function ChangePasswordForm() {
           maxLength={128}
           className={input}
         />
-        <p className="text-xs text-zinc-500">At least {MIN_PASSWORD_LENGTH} characters.</p>
+        <p className={hint}>At least {MIN_PASSWORD_LENGTH} characters.</p>
       </div>
       {error ? (
         <p className={errorText} role="alert">
@@ -115,11 +128,11 @@ function ChangePasswordForm() {
         </p>
       ) : null}
       {done ? (
-        <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
+        <p className="text-sm font-semibold text-fern" role="status">
           Password changed. Other devices have been signed out.
         </p>
       ) : null}
-      <button type="submit" className={`${buttonPrimary} self-start`} disabled={busy}>
+      <button type="submit" className={`${buttonPrimary} w-full sm:w-auto sm:self-start`} disabled={busy}>
         {busy ? "Saving…" : "Change password"}
       </button>
     </form>
