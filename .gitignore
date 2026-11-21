@@ -28,3 +28,6 @@ next-env.d.ts
 .vscode/
 .idea/
 .DS_Store
+
+# Eval results (may contain model output; regenerate with evals.run)
+backend/evals/runs/

@@ -146,6 +146,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
   - `FakeModerator` (blocks messages containing "BLOCK-ME"; always passed, so tests never download the real classifier);
   - the `make_client` fixture, which uses a temporary data dir and signs in a fresh account (`signed_in=False` for an anonymous client; `sign_up(client, email)` switches the client to another account). It turns the breached-password network check off.
 - The SSE token filter must accept both `AIMessageChunk` and `AIMessage`, because the fake model does not stream.
+- `backend/evals/` holds the paid evals of the tutor (37 cases; code checks plus a Haiku judge). They run the real `LessonService` and agent. `tests/test_evals.py` tests the harness with a fake model. Run them before changing the tutor's prompt, tools, model or effort. DeepEval is not used: its 4.x releases cannot be installed next to `transformers>=5.23`.
 
 ## Frontend (`frontend/`)
 
@@ -198,6 +199,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 | Frontend checks | `cd frontend && npm run lint && npx tsc --noEmit` (on a clean checkout run `npx next typegen` first) |
 | Regenerate API types (backend running) | `cd frontend && npm run gen:api` |
 | Interactive API docs | http://localhost:8000/docs |
+| Tutor evals (real model, **paid**; never in CI) | `cd backend && uv run python -m evals.run` (`--list` and `--export-cases` are free; see `backend/evals/README.md`) |
 
 ## Production deployment
 
