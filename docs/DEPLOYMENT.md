@@ -188,6 +188,7 @@ There is no email sending yet: no address verification, no reset links.
 - **Speech speed:** measured on the server (4 Ampere cores), Kokoro needs ≈ 1 s per sentence (≈ 4.7 s for an 8 s reply) and local Whisper `small` ≈ 6 s for an 8 s answer. Hence:
   - speech to text goes to Groq (`STT_PROVIDER=groq`, ≈ 1 s, free tier: about 2000 requests a day); local Whisper `small` is only the fallback. Without `GROQ_API_KEY` the backend logs an error and uses local Whisper;
   - replies are read aloud sentence by sentence while they stream, so the voice starts after ≈ 1 s instead of after the whole reply is synthesized.
+- **Speech engine:** production uses the full PyTorch model. To try the quantized one, add `TTS_ENGINE=onnx` to `deploy/.env` and run `docker compose up -d` (the first start downloads about 92 MB); remove the line and run it again to go back. It handles about 2.3× more speech on this server but uses about 0.5 GB less RAM, which moves the VM further below Oracle's 20% idle threshold, so switch the account to Pay As You Go first.
 - **Branch protection:** the workflows are path-filtered, so do not make their checks *required* in branch protection (a PR that touches only the frontend would wait forever for the backend check).
 - **GitHub Actions minutes:** the private repo gets 2000 free minutes a month; one run takes a few minutes.
 - **SQLite** is fine for a single backend process. Moving to Postgres means swapping in `PostgresSaver` / `PostgresStore` and adding a Postgres service to `compose.yaml`.

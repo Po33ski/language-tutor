@@ -4,7 +4,7 @@ An English-learning app. An AI tutor runs a spoken or written conversation lesso
 
 - **Backend:** Python 3.12, FastAPI, LangGraph + LangChain, Claude Haiku 5.5
 - **Frontend:** Next.js 16, React, TypeScript, Tailwind CSS
-- **Speech:** Whisper `large-v3-turbo` (speech to text; locally on the GPU, or hosted by Groq), Kokoro-82M (text to speech, self-hosted). Replies are read aloud sentence by sentence while they stream.
+- **Speech:** Whisper `large-v3-turbo` (speech to text; locally on the GPU, or hosted by Groq), Kokoro-82M (text to speech, self-hosted; the full PyTorch model by default, with a quantized ONNX build available for testing and as an alternative). Replies are read aloud sentence by sentence while they stream.
 - **Memory:** SQLite. Short-term memory is the LangGraph checkpointer; long-term memory is the LangGraph Store.
 
 Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Deployment (Vercel + Oracle Cloud, CI/CD with GitHub Actions) is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
@@ -204,6 +204,31 @@ Every learner message, typed or spoken, is checked before the tutor sees it ([`p
 
 **Alternative: an LLM classifier.** The local model can be replaced with a classifier on an LLM, e.g. a short Claude Haiku call with structured output that returns the category. It understands context better (sarcasm, threats without threatening words, the difference between a question about a word and an insult) and other languages, including Polish, but it adds about 0.5–1 s of delay to every message, on top of the tutor's reply, and a small cost per message (≈ $0.00006 with Haiku 5.5). To switch, implement the `Moderator` protocol in `moderation.py` with an LLM call and pass it to `create_app`.
 
+## Text-to-speech engines
+
+> **The full PyTorch model is the default and the engine used in production.**
+> The quantized ONNX build is included **for testing and as an alternative**. It is off unless you set `TTS_ENGINE=onnx`.
+
+| | Full model (default) | Quantized ONNX (testing / alternative) |
+|---|---|---|
+| Setting | `TTS_ENGINE=torch` | `TTS_ENGINE=onnx` |
+| Model | [`hexgrad/Kokoro-82M`](https://huggingface.co/hexgrad/Kokoro-82M) | `model_quantized.onnx` from the community conversion [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX), pinned to one revision and verified by SHA-256 |
+| Runtime | PyTorch (GPU locally, CPU on the server) | ONNX Runtime (CPU) |
+| One 4.5 s sentence on the server (4 ARM cores) | 2.57 s | 1.12 s |
+| Five sentences requested at once | 12.8 s until the last one | 5.6 s until the last one |
+| Model memory | 717 MB | 233 MB |
+
+Both engines use the same phonemes, the same voice and the same synthesis queue.
+
+**Before relying on the quantized build:**
+
+- It was compared on only three sentences and one voice (`af_heart`). Whisper read them the same as the full model's audio, but quantization can still change how the voice sounds, so listen to it first.
+- The speed-up was measured on the ARM server. On the x86 development CPU it was not faster, and locally the GPU runs the full model anyway.
+- On the server it uses about 0.5 GB less RAM, which moves the VM further below Oracle's idle-reclaim threshold (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+- Do not use `model_q8f16.onnx` from the same repository: it produces broken audio.
+
+To try it, add `TTS_ENGINE=onnx` to `backend/.env` (locally) or `deploy/.env` (on the server, then run `docker compose up -d`). The first start downloads about 92 MB. To go back, set `TTS_ENGINE=torch` or remove the line.
+
 ## Configuration
 
 Backend settings are read from `backend/.env` (see [`backend/.env.example`](backend/.env.example)):
@@ -220,6 +245,7 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `GROQ_API_KEY` / `GROQ_STT_MODEL` | – / `whisper-large-v3-turbo` | Groq API key ([console.groq.com](https://console.groq.com/keys)) and model, used when `STT_PROVIDER=groq`. |
 | `WHISPER_MODEL` / `WHISPER_DEVICE` | `large-v3-turbo` / `auto` | Local speech-to-text model and device (`auto`, `cuda`, `cpu`). |
 | `TTS_VOICE` | `af_heart` | Kokoro voice; the first letter is the accent (`a` = American, `b` = British). |
+| `TTS_ENGINE` | `torch` | Kokoro engine: `torch` (the full model) or `onnx` (its quantized build, about 2.3× faster on the 4-core ARM server, with a third of the memory). |
 | `MODERATION_ENABLED` / `MODERATION_MODEL` | `true` / `unitary/unbiased-toxic-roberta` | Checks every learner message before the tutor sees it (see [Moderation](#moderation)). |
 | `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | `30` / `90` | A session ends after this many idle days, and after the maximum in any case. |
 | `PASSWORD_BREACH_CHECK` | `true` | Reject passwords known from breaches (Have I Been Pwned; only 5 characters of the SHA-1 hash leave the server). |

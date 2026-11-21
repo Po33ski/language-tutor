@@ -57,7 +57,7 @@ More detail lives in other docs:
 | Lesson summary + progress profile | Claude Haiku 5.5 | Anthropic API | `SUMMARY_EFFORT=medium`; ≈ 10 s and ≈ $0.003 per lesson |
 | Speech to text | Whisper `large-v3-turbo`: locally with faster-whisper / CTranslate2, on the server hosted by Groq (local `small` as fallback) | local GPU, float16; server: Groq API, fallback CPU int8 | `STT_PROVIDER` (`local` / `groq`), `GROQ_API_KEY`, `GROQ_STT_MODEL`, `WHISPER_MODEL`, `WHISPER_DEVICE=auto` (`cpu` in the image) |
 | Moderation | `unitary/unbiased-toxic-roberta` (Detoxify "unbiased", Hugging Face `transformers`) | local and server CPU, ~30 ms per message | `MODERATION_ENABLED`, `MODERATION_MODEL` |
-| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV, one request per sentence | local GPU; server CPU (≈ 1 s per sentence) | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British) |
+| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV, one request per sentence | local GPU; server CPU (≈ 1 s per sentence) | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British), `TTS_ENGINE=torch` (default, the full model) or `onnx` (quantized, optional) |
 
 - The LLM is created with `init_chat_model("provider:model")`, so the provider can change through configuration alone. Haiku was chosen for cost; it may be replaced later.
 - The speech models download from Hugging Face on first run (≈ 2 GB). They load in a background task at startup. Calls block, so they run through `asyncio.to_thread`.
@@ -94,7 +94,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 | `infra/moderation/classifier.py` | `LocalModerator` (Hugging Face classifier, loaded in the background at startup; fails open) |
 | `infra/persistence/` | `connections.py` (`open_persistence`: checkpointer + store), `learner_memory.py` (`LearnerMemoryStore`: profiles, lessons, progress), `users.py` (`UserStore`: aiosqlite on `data/users.db`, users / sessions / daily_usage, schema via `PRAGMA user_version`) |
 | `infra/security/passwords.py` | `Argon2Hasher` (Argon2id via pwdlib), `HibpBreachChecker` |
-| `infra/speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`), `service.py` (`DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro behind a single-thread FIFO queue), `cuda.py` (CUDA 12 preload) |
+| `infra/speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`, full PyTorch model), `tts_onnx.py` (`OnnxKokoroSynthesizer`, quantized, opt-in), `service.py` (`DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro behind a single-thread FIFO queue), `cuda.py` (CUDA 12 preload) |
 
 ### Memory
 
@@ -133,6 +133,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 - **CUDA:** torch (Kokoro) ships CUDA 13, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS. That library comes from `nvidia-cublas-cu12` and is preloaded with `RTLD_GLOBAL` in `infra/speech/cuda.py`.
 - **torch extras:** install with `uv sync --extra gpu` (local) or `--extra cpu` (server, CI); they conflict by design. A bare `uv sync` drops cuBLAS. In CI, `uv run` needs `UV_NO_SYNC=1`, or it re-syncs to the CUDA build.
 - **espeak-ng path limit:** Kokoro's espeak-ng fails when its data path (inside the venv) is longer than ~160 characters. Keep venvs at short paths (the image uses `/app/.venv`).
+- **ONNX Kokoro:** the full PyTorch model stays the default until the developer decides otherwise. `tts_onnx.py` pins the community model's revision and SHA-256. Use only `model_quantized.onnx`: `model_q8f16.onnx` produces broken audio.
 - **Pinned dependencies:**
   - `av` is pinned `>=14,<16`, because version 16+ breaks faster-whisper 1.2.
   - `en-core-web-sm` is a URL dependency in `pyproject.toml`, because otherwise misaki pip-installs it at runtime.

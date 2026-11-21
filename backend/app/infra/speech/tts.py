@@ -13,6 +13,14 @@ SAMPLE_RATE = 24_000
 KOKORO_REPO = "hexgrad/Kokoro-82M"
 
 
+def to_wav(chunks: list[np.ndarray]) -> bytes:
+    """Join audio chunks into a 16-bit mono WAV file."""
+    audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+    buffer = io.BytesIO()
+    sf.write(buffer, audio, SAMPLE_RATE, format="WAV", subtype="PCM_16")
+    return buffer.getvalue()
+
+
 class KokoroSynthesizer:
     """Loads the model on first use; `synthesize` is blocking (run it in a thread)."""
 
@@ -37,7 +45,4 @@ class KokoroSynthesizer:
         self.load()
         with self._lock:
             chunks = [result.audio.numpy() for result in self._pipeline(text, voice=self._voice)]
-        audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
-        buffer = io.BytesIO()
-        sf.write(buffer, audio, SAMPLE_RATE, format="WAV", subtype="PCM_16")
-        return buffer.getvalue()
+        return to_wav(chunks)

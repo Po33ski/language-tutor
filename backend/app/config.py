@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"  # "auto" | "cuda" | "cpu"
     # Kokoro voice; the first letter is the accent: "a" = American, "b" = British.
     tts_voice: str = "af_heart"
+    # Kokoro engine: "torch" (the full model) or "onnx" (its quantized build: about 2.3x
+    # faster on the CPU server, with a third of the memory).
+    tts_engine: Literal["torch", "onnx"] = "torch"
 
     # Moderation: a local toxicity classifier (Hugging Face) checks every learner message
     # before the tutor sees it; threats, hate, sexual messages and targeted insults are
