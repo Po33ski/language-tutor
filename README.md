@@ -129,7 +129,7 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 | `Account` | `id`, `email`, `created_at`, `has_profile` |
 | `PasswordChange` | `current_password`, `new_password` |
 
-#### Profile: [`memory.py`](backend/app/storage/memory.py)
+#### Profile: [`models.py`](backend/app/domain/learners/models.py)
 
 | Model | Fields |
 |---|---|
@@ -139,7 +139,7 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 
 The "*Create* model + full model" pattern is common: the client sends only what the user entered, and the server adds the id and timestamps.
 
-#### Lesson: [`memory.py`](backend/app/storage/memory.py), [`lessons.py`](backend/app/api/lessons.py), [`transcript.py`](backend/app/agent/transcript.py)
+#### Lesson: [`models.py`](backend/app/domain/lessons/models.py), [`lessons.py`](backend/app/api/lessons.py), [`transcript.py`](backend/app/infra/agent/transcript.py)
 
 | Model | Fields |
 |---|---|
@@ -153,7 +153,7 @@ The "*Create* model + full model" pattern is common: the client sends only what 
 
 `LessonSummary` is also the output schema for Claude, so every summary is guaranteed to have these fields.
 
-#### Corrections and vocabulary: [`state.py`](backend/app/agent/state.py)
+#### Corrections and vocabulary: [`models.py`](backend/app/domain/lessons/models.py)
 
 | Model | Fields |
 |---|---|
@@ -193,7 +193,7 @@ These two are `TypedDict`s rather than Pydantic classes, because they are part o
 
 ### Moderation
 
-Every learner message, typed or spoken, is checked before the tutor sees it ([`moderation.py`](backend/app/safety/moderation.py)). A blocked message is not sent to the tutor and not stored; the learner sees why it was not sent.
+Every learner message, typed or spoken, is checked before the tutor sees it ([`policy.py`](backend/app/domain/moderation/policy.py)). A blocked message is not sent to the tutor and not stored; the learner sees why it was not sent.
 
 - **Classifier:** [`unitary/unbiased-toxic-roberta`](https://huggingface.co/unitary/unbiased-toxic-roberta), the "unbiased" [Detoxify](https://github.com/unitaryai/detoxify) model, downloaded from Hugging Face on the first start (≈ 500 MB) and run in the backend on the CPU. About 30 ms per message, free, and the text does not leave the server for the check. It is trained on English, which is what learners write in the app.
 - **What is blocked:** threats, attacks on a group of people, sexual messages, and insults aimed at someone ("you idiot", "you are a stupid bot").

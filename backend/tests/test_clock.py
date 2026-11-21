@@ -2,13 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agent.clock import (
-    CLOCK_NOTE_KEY,
-    ClockPhase,
-    LessonClock,
-    with_clock_notes,
-    wrap_up_seconds,
-)
+from app.domain.lessons.clock import ClockPhase, LessonClock, wrap_up_seconds
+from app.infra.agent.clock_notes import CLOCK_NOTE_KEY, with_clock_notes
 
 
 def test_wrap_up_is_a_fifth_of_the_lesson_between_one_and_three_minutes() -> None:

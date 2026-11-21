@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps import SettingsDep, UsersDep
-from app.auth.store import User
+from app.domain.accounts.models import User
 
 _bearer = HTTPBearer(
     auto_error=False, description="Session token from /api/auth/signup or /api/auth/login"

@@ -16,6 +16,9 @@ More detail lives in other docs:
 - **Skills:** use `.claude/skills/langgraph` for agent code and `.claude/skills/vercel-react-best-practices` for React/Next code (both in the repo, pinned in `skills-lock.json`). For CI/CD work (`.github/workflows/`, `deploy/`, `backend/Dockerfile`) use the `building-cicd-pipelines` skill.
   - `building-cicd-pipelines` is installed globally on the developer's machine (`~/.claude/skills/`), not in the repo: `npx skills add jeremylongshore/claude-code-plugins-plus-skills --skill building-cicd-pipelines --agent claude-code --copy --global`.
   - It is generic (it suggests staging, registries, Slack and so on). The settled design in `docs/DEPLOYMENT.md` wins: no staging, images built on the VM, no registry, deploy only from `main` after the checks pass.
+  - For FastAPI backend design, use the `fastapi-clean-architecture` skill, also installed globally: `npx skills add rafaelkamimura/claude-tools --skill fastapi-clean-architecture --agent claude-code --copy --global`.
+  - Take only its general principles from it: thin routers, business logic outside endpoints, domain exceptions, dependencies that point inward, tests with swapped dependencies. This file's decisions win: keep FastAPI `Depends` (`api/deps.py`) and Pydantic models in the domain, the LangGraph store and checkpointer on SQLite, and opaque session tokens. Do not add `dependency-injector`, SQLAlchemy, JWT or Redis, and never copy its `CORS_ORIGINS=["*"]` example.
+  - The backend uses its `api` / `domain` / `infra` layering inside `backend/app/` (not `src/`); see the module map.
 - **Visual design** (styling, layout, typography of the frontend): use the `frontend-design` skill (Anthropic), also installed globally: `npx skills add anthropics/claude-plugins-official --skill frontend-design --agent claude-code --copy --global`. It guides the look; `vercel-react-best-practices` still governs the React code.
 
 ## Product decisions (settled; do not re-ask)
@@ -61,27 +64,36 @@ More detail lives in other docs:
 
 ### Module map (`backend/app/`)
 
+Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`. `domain` is plain Python plus Pydantic models: no FastAPI, LangChain, LangGraph, SQLite or HTTP clients, and no `app.config`. `api` never imports `infra`. Only `main.py` and `cli.py` wire the layers together. `tests/test_architecture.py` enforces this.
+
 | Path | Responsibility |
 |---|---|
-| `main.py` | `create_app(settings, model, summarizer, speech_service)`. The lifespan opens persistence, builds the tutor and summarizer, creates per-lesson locks and starts the background tasks (end stale lessons, warm up speech). Tests inject fakes through its parameters. |
+| `main.py` | Composition root: `create_app(settings, model, summarizer, speech_service, moderator)`. The lifespan opens persistence, builds the adapters and the services (`AccountService`, `LessonService`) and starts the background tasks (end stale lessons, warm up speech and moderation). Tests inject fakes through its parameters. |
 | `config.py` | `Settings` + `get_settings()`. Data lives in `data/checkpoints.db`, `data/memory.db` and `data/users.db`. |
-| `api/deps.py` | FastAPI `Depends` aliases: `SettingsDep`, `StoreDep`, `TutorDep`, `SummarizerDep`, `SpeechDep` (503 when speech is disabled), `LessonLocksDep`. Endpoints never build resources themselves. |
+| `cli.py` | Admin commands: `list-users`, `reset-password`, `claim-profile` (`python -m app.cli`) |
+| `api/deps.py` | FastAPI `Depends` aliases: `SettingsDep`, `MemoryDep`, `LessonsDep`, `AccountsDep`, `UsersDep`, `SpeechDep` (503 when speech is disabled). Endpoints never build resources themselves. |
 | `api/security.py` | `CurrentSessionDep` / `CurrentUserDep` (session from the Bearer token; 401 otherwise), `daily_quota(kind)` (per-account and app-wide daily limits in `users.db`), the in-memory `RateLimiter` (`allow`, or `is_limited` + `record` for failed logins) and `rate_limited(group)` per IP: `tutor`, `transcribe`, `synthesize` |
 | `api/auth.py` | signup, login, logout, me, password change; `AuthLimiters` (signups per IP, failed logins per IP and per email) |
-| `auth/` | `passwords.py` (Argon2id via pwdlib, policy, HIBP breach check), `store.py` (`UserStore`: aiosqlite on `data/users.db`, users / sessions / daily_usage, schema via `PRAGMA user_version`), `cli.py` (`list-users`, `reset-password`, `claim-profile`) |
-| `api/{health,auth,profiles,lessons,speech}.py` | Routers, all under the `/api` prefix. `lessons.py` holds the SSE turn endpoint and `_initial_state`, which copies long-term memory into a new lesson. |
-| `agent/graph.py` | `build_model`, `build_tutor_agent` (`create_agent` + middleware `tutor_prompt` and `end_turn_if_already_replied`) |
-| `agent/state.py` | `TutorState(AgentState)`: `user_id`, `profile`, `topic`, `progress`, `previous_summaries`, plus append-only `mistakes` and `vocabulary` lists. `Mistake` and `VocabularyItem` are TypedDicts. |
-| `agent/prompts.py` | `TUTOR_SYSTEM_PROMPT`, `build_system_prompt(state)` (includes the fixed lesson length and the phase rules), and `KICKOFF_MESSAGE = "[START_LESSON]"` |
-| `agent/clock.py` | `LessonClock` (phases `on_track` / `wrap_up` / `time_up`, the clock note), `with_clock_notes` (used by the `LessonClockNotes` middleware in `graph.py`), `CLOCK_NOTE_KEY` |
-| `agent/tools.py` | `record_mistake` and `add_vocabulary` return `Command(update=...)` with a `ToolMessage`. `save_preference` writes to the store. |
-| `agent/transcript.py` | `thread_config(lesson_id)` and `to_chat_messages`, which hides the kickoff and tool messages and merges consecutive assistant texts |
-| `agent/summarizer.py` | `Summarizer` protocol and `LlmSummarizer`, which produces a structured `LessonSummary` and a progress text of at most 120 words |
-| `agent/wrapup.py` | `end_lesson` (idempotent; discards a lesson with no learner messages) and `end_stale_lessons` |
-| `safety/moderation.py` | `LocalModerator` (classifier, loaded in the background at startup; fails open), `decide` (thresholds, quoted words left out, insults blocked only when addressed), `BLOCKED_MESSAGES`, the `Moderator` protocol; used by `send_message` (SSE `blocked`) |
-| `storage/memory.py` | All long-term memory models and store access: profiles, lessons, progress |
-| `storage/persistence.py` | `open_persistence(settings)` yields the checkpointer and the store |
-| `speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`), `service.py` (`SpeechService` protocol, `DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro), `cuda.py` (CUDA 12 preload) |
+| `api/{health,profiles,lessons,speech}.py` | Routers, all under the `/api` prefix: HTTP schemas and mapping domain errors to status codes. `lessons.py` turns the domain's turn events into SSE. |
+| `domain/ports.py` | Protocols the domain needs: `LearnerMemory`, `Tutor`, `Summarizer`, `Moderator`, `SpeechService`, `AccountStore`, `PasswordHasher`, `BreachChecker` |
+| `domain/lessons/models.py` | `Lesson`, `LessonSummary`, `Mistake`, `VocabularyItem`, `ChatMessage`, `LessonContext`, `LessonConversation`, turn events (`TutorToken`, `MistakeRecorded`, `VocabularyAdded`, `TurnFailed`, `LessonTimeUp`, `TurnDone`), lesson errors |
+| `domain/lessons/service.py` | `LessonService`: create, view, `request_turn` (ownership, 409 cases, moderation), `run_turn` (per-lesson lock, clock), `end` (idempotent; discards a lesson with no learner messages), `end_stale`; `_context` copies long-term memory into a new lesson |
+| `domain/lessons/clock.py` | `LessonClock` (phases `on_track` / `wrap_up` / `time_up`, the clock note) |
+| `domain/learners/models.py` | `Profile`, `ProfileCreate`, `Progress`, `EnglishLevel`, lesson length limits |
+| `domain/accounts/` | `models.py` (`User`, errors), `passwords.py` (NIST policy), `service.py` (`AccountService`: register, verify credentials, change password) |
+| `domain/moderation/policy.py` | `decide` (thresholds, insults blocked only when addressed), `strip_quoted`, `BLOCKED_MESSAGES`, `ModerationVerdict` |
+| `infra/agent/graph.py` | `build_model`, `build_tutor_agent` (`create_agent` + middleware `tutor_prompt`, `LessonClockNotes` and `end_turn_if_already_replied`) |
+| `infra/agent/tutor.py` | `LangGraphTutor` (the `Tutor` port): the initial lesson state, learner messages with clock notes, graph stream → domain events |
+| `infra/agent/state.py` | `TutorState(AgentState)`: `user_id`, `profile`, `topic`, `progress`, `previous_summaries`, plus append-only `mistakes` and `vocabulary` lists |
+| `infra/agent/prompts.py` | `TUTOR_SYSTEM_PROMPT`, `build_system_prompt(state)` (includes the fixed lesson length and the phase rules), and `KICKOFF_MESSAGE = "[START_LESSON]"` |
+| `infra/agent/clock_notes.py` | `CLOCK_NOTE_KEY`, `with_clock_notes` (used by the `LessonClockNotes` middleware) |
+| `infra/agent/tools.py` | `record_mistake` and `add_vocabulary` return `Command(update=...)` with a `ToolMessage`. `save_preference` writes to the store. |
+| `infra/agent/transcript.py` | `thread_config(lesson_id)` and `to_chat_messages`, which hides the kickoff and tool messages and merges consecutive assistant texts |
+| `infra/agent/summarizer.py` | `LlmSummarizer`, which produces a structured `LessonSummary` and a progress text of at most 120 words |
+| `infra/moderation/classifier.py` | `LocalModerator` (Hugging Face classifier, loaded in the background at startup; fails open) |
+| `infra/persistence/` | `connections.py` (`open_persistence`: checkpointer + store), `learner_memory.py` (`LearnerMemoryStore`: profiles, lessons, progress), `users.py` (`UserStore`: aiosqlite on `data/users.db`, users / sessions / daily_usage, schema via `PRAGMA user_version`) |
+| `infra/security/passwords.py` | `Argon2Hasher` (Argon2id via pwdlib), `HibpBreachChecker` |
+| `infra/speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`), `service.py` (`DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro), `cuda.py` (CUDA 12 preload) |
 
 ### Memory
 
@@ -92,11 +104,11 @@ More detail lives in other docs:
 | Long-term: lesson | store | `("lessons",)` / `lesson_id` | `user_id`, `topic`, `status` (`active` / `summarized` / `discarded`), dates, `summary` |
 | Long-term: progress | store | `("users", user_id)` / `"progress"` | A cumulative learner description, rewritten by Haiku after each lesson |
 
-- **Reads:** when a lesson starts (`content: null`), `_initial_state` copies the profile, the progress text and the 3 most recent summaries into the lesson state. The agent never searches the store mid-lesson.
+- **Reads:** when a lesson starts (`content: null`), `LessonService._context` copies the profile, the progress text and the 3 most recent summaries into the lesson state. The agent never searches the store mid-lesson.
 - **Writes:**
   - The onboarding form creates the profile.
   - The `save_preference` tool writes during a lesson.
-  - `end_lesson` writes the summary, then the progress update.
+  - `LessonService.end` writes the summary, then the progress update.
 - The checkpointer and the store use separate SQLite files so their writes never compete for the same lock. `backend/data/` is gitignored. To reset all data, stop the backend and delete that folder.
 
 ### API conventions
@@ -117,7 +129,7 @@ More detail lives in other docs:
 - **Duplicate or empty replies:** Haiku sometimes writes its reply alongside the tool calls and then again after the tool results. The `end_turn_if_already_replied` middleware jumps to the end in that case. Keep it, and keep its test.
 - **Kickoff:** a hidden `HumanMessage("[START_LESSON]")` whose id starts with `kickoff-`. `to_chat_messages` removes it from everything the UI shows.
 - **Whisper:** use `language="en"`, `vad_filter=True` and **no `initial_prompt`**. A prompt made Whisper fix the learner's grammar, and the mistakes must be kept verbatim.
-- **CUDA:** torch (Kokoro) ships CUDA 13, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS. That library comes from `nvidia-cublas-cu12` and is preloaded with `RTLD_GLOBAL` in `speech/cuda.py`.
+- **CUDA:** torch (Kokoro) ships CUDA 13, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS. That library comes from `nvidia-cublas-cu12` and is preloaded with `RTLD_GLOBAL` in `infra/speech/cuda.py`.
 - **torch extras:** install with `uv sync --extra gpu` (local) or `--extra cpu` (server, CI); they conflict by design. A bare `uv sync` drops cuBLAS. In CI, `uv run` needs `UV_NO_SYNC=1`, or it re-syncs to the CUDA build.
 - **espeak-ng path limit:** Kokoro's espeak-ng fails when its data path (inside the venv) is longer than ~160 characters. Keep venvs at short paths (the image uses `/app/.venv`).
 - **Pinned dependencies:**
@@ -203,7 +215,7 @@ Full setup guide: `docs/DEPLOYMENT.md`. Live state:
 
 - **Flow:** push to `main` → path-filtered `backend.yml` (`backend/**`, `deploy/**`) / `frontend.yml` (`frontend/**`) run the checks, then deploy. PRs and other branches only run the checks. Manual redeploy: Actions → Run workflow on `main`.
 - **Server access from this machine:** `ssh -i ~/.ssh/language-tutor-ci -o IdentitiesOnly=yes ubuntu@92.5.78.54` works non-interactively (the CI key). The developer's own key (`~/.ssh/id_ed25519`) has a passphrase. Ask before changing anything on the server.
-- **Account admin on the server:** `docker compose exec backend python -m app.auth.cli list-users | reset-password EMAIL | claim-profile EMAIL` (see `docs/DEPLOYMENT.md` → Accounts).
+- **Account admin on the server:** `docker compose exec backend python -m app.cli list-users | reset-password EMAIL | claim-profile EMAIL` (see `docs/DEPLOYMENT.md` → Accounts).
 - **Manual on the server:** changes to `deploy/.env` (then `cd ~/language-tutor/deploy && docker compose up -d`), OS updates, a new setting that needs a value. Logs: `docker compose logs -f backend`.
 - **Not set up yet:** the nightly backup cron (`deploy/backup.sh`) and an Anthropic spend limit.
 - **Gotchas:**

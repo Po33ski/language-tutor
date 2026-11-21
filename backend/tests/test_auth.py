@@ -7,11 +7,13 @@ import pytest
 from langchain_core.messages import AIMessage
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-from app.auth import cli
-from app.auth import store as store_module
-from app.auth.passwords import PasswordPolicyError, check_policy, hash_password, is_breached
-from app.auth.store import UserStore, hash_token
-from app.storage import memory
+from app import cli
+from app.domain.accounts.passwords import PasswordPolicyError, check_policy
+from app.domain.learners.models import ProfileCreate
+from app.infra.persistence import users as store_module
+from app.infra.persistence.learner_memory import LearnerMemoryStore
+from app.infra.persistence.users import UserStore, hash_token
+from app.infra.security.passwords import hash_password, is_breached
 from tests.conftest import STRONG_PASSWORD, sign_up
 from tests.test_lessons import _send, _start_lesson
 
@@ -71,7 +73,7 @@ def test_signup_rejects_breached_password(make_client, monkeypatch) -> None:
     async def breached(password, client):
         return True
 
-    monkeypatch.setattr("app.api.auth.is_breached", breached)
+    monkeypatch.setattr("app.infra.security.passwords.is_breached", breached)
     client = make_client([], signed_in=False, password_breach_check=True)
     response = client.post("/api/auth/signup", json=CREDENTIALS)
     assert response.status_code == 422
@@ -246,7 +248,7 @@ def test_breach_check_fails_open() -> None:
 
 
 def test_cli_claim_profile_and_reset_password(tmp_path, capsys) -> None:
-    profile = memory.ProfileCreate(name="Old Anna", level="B1", main_topic="Travel")
+    profile = ProfileCreate(name="Old Anna", level="B1", main_topic="Travel")
 
     async def scenario() -> None:
         async with (
@@ -254,12 +256,13 @@ def test_cli_claim_profile_and_reset_password(tmp_path, capsys) -> None:
             AsyncSqliteStore.from_conn_string(str(tmp_path / "memory.db")) as store,
         ):
             await store.setup()
-            older = await memory.create_profile(store, profile)
-            recent = await memory.create_profile(store, profile.model_copy(update={"name": "B"}))
-            await memory.create_lesson(store, recent.id, "Travel")
+            memory = LearnerMemoryStore(store)
+            older = await memory.create_profile(profile)
+            recent = await memory.create_profile(profile.model_copy(update={"name": "B"}))
+            await memory.create_lesson(recent.id, "Travel")
             user = await users.create_user("anna@example.com", hash_password(STRONG_PASSWORD))
 
-            await cli.claim_profile(users, store, "Anna@example.com", None, force=False)
+            await cli.claim_profile(users, memory, "Anna@example.com", None, force=False)
             linked = await users.get_user(user.id)
             assert linked.profile_id == recent.id  # the most recently used profile
             assert older.id not in await users.linked_profile_ids()

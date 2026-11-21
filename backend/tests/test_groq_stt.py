@@ -4,8 +4,8 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.speech.groq_stt import TRANSCRIPTIONS_URL, GroqTranscriber, upload_filename
-from app.speech.service import DefaultSpeechService
+from app.infra.speech.groq_stt import TRANSCRIPTIONS_URL, GroqTranscriber, upload_filename
+from app.infra.speech.service import DefaultSpeechService
 
 WEBM = b"\x1a\x45\xdf\xa3" + b"\x00" * 16
 MP4 = b"\x00\x00\x00\x20ftypM4A " + b"\x00" * 16

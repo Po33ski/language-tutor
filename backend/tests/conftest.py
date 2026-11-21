@@ -8,9 +8,9 @@ from langchain_core.messages import AIMessage, BaseMessage
 from pydantic import Field
 
 from app.config import Settings
+from app.domain.lessons.models import LessonSummary
+from app.domain.moderation.policy import ALLOWED, ModerationCategory, ModerationVerdict
 from app.main import create_app
-from app.safety.moderation import ALLOWED, ModerationCategory, ModerationVerdict
-from app.storage.memory import LessonSummary
 
 
 class FakeTutorModel(GenericFakeChatModel):

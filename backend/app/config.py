@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     # Moderation: a local toxicity classifier (Hugging Face) checks every learner message
     # before the tutor sees it; threats, hate, sexual messages and targeted insults are
-    # blocked (app/safety/moderation.py).
+    # blocked (app/domain/moderation/policy.py).
     moderation_enabled: bool = True
     moderation_model: str = "unitary/unbiased-toxic-roberta"
 

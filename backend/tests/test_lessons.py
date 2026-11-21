@@ -144,7 +144,7 @@ def test_profile_main_preferences_can_be_edited(make_client, profile_payload) ->
 def test_tutor_sees_the_lesson_clock_and_closes_when_time_is_up(
     make_client, profile_payload, monkeypatch
 ) -> None:
-    from app.api import lessons as lessons_api
+    from app.domain.lessons import service as lessons_service
 
     client = make_client(
         [
@@ -172,8 +172,8 @@ def test_tutor_sees_the_lesson_clock_and_closes_when_time_is_up(
     )
 
     # Eleven minutes later the time is up: the tutor's reply is its closing message.
-    later = lessons_api._now() + timedelta(minutes=11)
-    monkeypatch.setattr(lessons_api, "_now", lambda: later)
+    later = lessons_service._now() + timedelta(minutes=11)
+    monkeypatch.setattr(lessons_service, "_now", lambda: later)
     turn = _send(client, lesson_id, "I use Python")
     assert [event for event, _ in turn][-2:] == ["time_up", "done"]
     assert client.model.inputs[-1][-1].content.startswith("[Lesson clock: time is up")

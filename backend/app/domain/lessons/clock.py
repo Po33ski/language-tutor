@@ -2,21 +2,14 @@
 
 The system prompt must stay the same for a whole lesson (thinking blocks are bound to
 it), so the ticking time cannot live there. Instead, every learner message carries a
-short clock note in its metadata, and `with_clock_notes` shows it to the model in front
-of the message. The note is stored with the message, so earlier turns look exactly the
-same to the model on every call.
+short clock note (see `app/infra/agent/clock_notes.py`). The note is stored with the
+message, so earlier turns look exactly the same to the model on every call.
 """
 
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-
-from langchain_core.messages import AnyMessage, HumanMessage
-
-# Key in a learner message's `additional_kwargs` that holds its clock note.
-CLOCK_NOTE_KEY = "lesson_clock"
 
 
 class ClockPhase(StrEnum):
@@ -68,28 +61,3 @@ class LessonClock:
         if self.phase is ClockPhase.WRAP_UP:
             note += " Start wrapping up: no new topics."
         return note + "]"
-
-
-def with_clock_notes(messages: Sequence[AnyMessage]) -> list[AnyMessage]:
-    """Copies of the messages for the model, with each clock note in front of its message."""
-    result: list[AnyMessage] = []
-    for message in messages:
-        note = (
-            message.additional_kwargs.get(CLOCK_NOTE_KEY)
-            if isinstance(message, HumanMessage)
-            else None
-        )
-        if note and isinstance(message.content, str):
-            other_kwargs = {
-                key: value
-                for key, value in message.additional_kwargs.items()
-                if key != CLOCK_NOTE_KEY
-            }
-            message = message.model_copy(
-                update={
-                    "content": f"{note}\n\n{message.content}",
-                    "additional_kwargs": other_kwargs,
-                }
-            )
-        result.append(message)
-    return result

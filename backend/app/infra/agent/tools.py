@@ -2,8 +2,8 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from app.agent.state import Mistake, VocabularyItem
-from app.storage import memory
+from app.domain.lessons.models import Mistake, VocabularyItem
+from app.infra.persistence.learner_memory import LearnerMemoryStore
 
 
 @tool
@@ -62,7 +62,7 @@ async def save_preference(key: str, value: str, runtime: ToolRuntime) -> str:
     user_id = runtime.state.get("user_id")
     if not user_id or runtime.store is None:
         return "Could not save the preference."
-    await memory.save_preference(runtime.store, user_id, key, value)
+    await LearnerMemoryStore(runtime.store).save_preference(user_id, key, value)
     return "Preference saved."
 
 

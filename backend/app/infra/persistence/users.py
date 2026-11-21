@@ -12,12 +12,18 @@ import secrets
 import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import aiosqlite
+
+from app.domain.accounts.models import (
+    EmailTakenError,
+    ProfileTakenError,
+    User,
+    UserCredentials,
+)
 
 SCHEMA_VERSION = 1
 
@@ -49,28 +55,6 @@ CREATE TABLE daily_usage (
 
 # How often a session's last use is written back (and its expiry slid forward).
 _TOUCH_INTERVAL = timedelta(hours=1)
-
-
-class EmailTakenError(Exception):
-    pass
-
-
-class ProfileTakenError(Exception):
-    pass
-
-
-@dataclass(frozen=True)
-class User:
-    id: str
-    email: str
-    profile_id: str
-    created_at: datetime
-
-
-@dataclass(frozen=True)
-class UserCredentials:
-    user: User
-    password_hash: str
 
 
 def hash_token(token: str) -> str:

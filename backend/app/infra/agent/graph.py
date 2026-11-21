@@ -16,11 +16,11 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
 
-from app.agent.clock import with_clock_notes
-from app.agent.prompts import build_system_prompt
-from app.agent.state import TutorState
-from app.agent.tools import TUTOR_TOOLS
 from app.config import Settings
+from app.infra.agent.clock_notes import with_clock_notes
+from app.infra.agent.prompts import build_system_prompt
+from app.infra.agent.state import TutorState
+from app.infra.agent.tools import TUTOR_TOOLS
 
 
 @dynamic_prompt
@@ -32,7 +32,7 @@ class LessonClockNotes(AgentMiddleware):
     """Shows the model the lesson clock note stored with each learner message.
 
     The note stays in the message metadata, so the conversation the learner sees and the
-    summarizer's transcript stay clean (see `app/agent/clock.py`).
+    summarizer's transcript stay clean (see `app/infra/agent/clock_notes.py`).
     """
 
     def wrap_model_call(

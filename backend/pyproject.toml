@@ -28,7 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 # Pick one. torch is required by kokoro either way; the extra only chooses its build.
 # GPU (local development): PyPI torch with CUDA, plus CUDA 12 cuBLAS for Whisper
-# (see app/speech/cuda.py).
+# (see app/infra/speech/cuda.py).
 gpu = ["torch>=2.15.0", "nvidia-cublas-cu12>=12.9.3.13"]
 # CPU only (the server and CI): skips several GB of CUDA libraries.
 cpu = ["torch>=2.15.0"]

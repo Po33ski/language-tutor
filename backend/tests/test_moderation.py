@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage
 
-from app.safety.moderation import (
+from app.domain.moderation.policy import (
     BLOCKED_MESSAGES,
     ModerationCategory,
     decide,

@@ -4,7 +4,7 @@ import io
 import logging
 import threading
 
-from app.speech.cuda import preload_cuda12_libraries
+from app.infra.speech.cuda import preload_cuda12_libraries
 
 logger = logging.getLogger(__name__)
 

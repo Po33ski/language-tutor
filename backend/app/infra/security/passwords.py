@@ -1,21 +1,14 @@
-"""Password hashing (Argon2id) and the password policy (NIST SP 800-63B-4).
+"""Password hashing (Argon2id) and the breach check (Have I Been Pwned)."""
 
-The policy follows NIST for passwords used as the only factor: at least 15 characters,
-long passphrases allowed, no composition rules ("one digit, one capital"), and a check
-against passwords known from data breaches.
-"""
-
+import asyncio
 import hashlib
 import logging
-import unicodedata
 
 import httpx
 from pwdlib import PasswordHash
 
 logger = logging.getLogger(__name__)
 
-MIN_LENGTH = 15
-MAX_LENGTH = 128
 PWNED_RANGE_URL = "https://api.pwnedpasswords.com/range/"
 
 # Argon2id with pwdlib's defaults (m=64 MiB, t=3, p=4), above OWASP's minimum
@@ -24,34 +17,6 @@ _hasher = PasswordHash.recommended()
 # Verified when the email is unknown, so a failed login takes the same time either way
 # and its timing does not reveal which emails have accounts.
 _DUMMY_HASH = _hasher.hash("timing-equalization-dummy-password")
-
-
-class PasswordPolicyError(ValueError):
-    """The password is not allowed; the message can be shown to the user."""
-
-
-def normalize(password: str) -> str:
-    """NFKC, as NIST asks, so the same password typed on another keyboard still matches."""
-    return unicodedata.normalize("NFKC", password)
-
-
-def check_policy(password: str, email: str) -> None:
-    length = len(password)
-    if length < MIN_LENGTH:
-        raise PasswordPolicyError(
-            f"Use at least {MIN_LENGTH} characters. A few random words make a strong "
-            "password that is easy to remember."
-        )
-    if length > MAX_LENGTH:
-        raise PasswordPolicyError(f"Use at most {MAX_LENGTH} characters.")
-    if len(set(password)) < 5:
-        raise PasswordPolicyError("This password is too repetitive. Choose another one.")
-    lowered = password.lower()
-    local_part = email.split("@", 1)[0].lower()
-    if (len(local_part) >= 4 and local_part in lowered) or "languagetutor" in lowered.replace(
-        " ", ""
-    ):
-        raise PasswordPolicyError("Do not use your email or the app's name in the password.")
 
 
 async def is_breached(password: str, client: httpx.AsyncClient) -> bool:
@@ -91,3 +56,24 @@ def verify_password(password: str, password_hash: str) -> tuple[bool, str | None
 
 def verify_dummy(password: str) -> None:
     _hasher.verify(password, _DUMMY_HASH)
+
+
+class Argon2Hasher:
+    """Runs the slow hashing in threads, so it does not block the event loop."""
+
+    async def hash(self, password: str) -> str:
+        return await asyncio.to_thread(hash_password, password)
+
+    async def verify(self, password: str, password_hash: str) -> tuple[bool, str | None]:
+        return await asyncio.to_thread(verify_password, password, password_hash)
+
+    async def verify_dummy(self, password: str) -> None:
+        await asyncio.to_thread(verify_dummy, password)
+
+
+class HibpBreachChecker:
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self._client = client
+
+    async def contains(self, password: str) -> bool:
+        return await is_breached(password, self._client)

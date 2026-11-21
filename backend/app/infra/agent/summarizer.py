@@ -1,14 +1,12 @@
 """Turns a finished lesson into long-term memory: a lesson summary and a progress profile."""
 
-from typing import Protocol
-
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agent.state import Mistake, VocabularyItem
 from app.config import Settings
-from app.storage.memory import LessonSummary, Profile
+from app.domain.learners.models import Profile
+from app.domain.lessons.models import LessonSummary, Mistake, VocabularyItem
 
 SUMMARY_SYSTEM_PROMPT = """\
 You summarize English lessons for a tutoring app. The summary is stored in the \
@@ -54,22 +52,6 @@ Latest lesson ({date}, topic: {topic}):
 Practiced: {practiced}
 Recurring mistakes: {mistakes}
 Next steps: {next_steps}"""
-
-
-class Summarizer(Protocol):
-    async def summarize(
-        self,
-        *,
-        profile: Profile,
-        topic: str,
-        transcript: str,
-        mistakes: list[Mistake],
-        vocabulary: list[VocabularyItem],
-    ) -> LessonSummary: ...
-
-    async def update_progress(
-        self, *, profile: Profile, previous: str, date: str, topic: str, summary: LessonSummary
-    ) -> str: ...
 
 
 def _bullets(lines: list[str]) -> str:

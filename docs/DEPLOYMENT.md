@@ -177,9 +177,9 @@ Admin commands run inside the backend container (in `~/language-tutor/deploy`); 
 
 | Task | Command |
 |---|---|
-| List accounts | `docker compose exec backend python -m app.auth.cli list-users` |
-| Forgotten password | `docker compose exec backend python -m app.auth.cli reset-password EMAIL` prints a temporary password and signs out every session; the user changes it under *Account* |
-| Keep data from before accounts | After signing up, `docker compose exec backend python -m app.auth.cli claim-profile EMAIL` links the most recently used old profile (with its lessons and progress) to that account. It lists the unclaimed profiles; pick another with `--profile-id ID`, and use `--force` if the account already filled in its own profile |
+| List accounts | `docker compose exec backend python -m app.cli list-users` |
+| Forgotten password | `docker compose exec backend python -m app.cli reset-password EMAIL` prints a temporary password and signs out every session; the user changes it under *Account* |
+| Keep data from before accounts | After signing up, `docker compose exec backend python -m app.cli claim-profile EMAIL` links the most recently used old profile (with its lessons and progress) to that account. It lists the unclaimed profiles; pick another with `--profile-id ID`, and use `--force` if the account already filled in its own profile |
 
 There is no email sending yet: no address verification, no reset links.
 

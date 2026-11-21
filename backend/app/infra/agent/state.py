@@ -1,19 +1,9 @@
 import operator
-from typing import Annotated, NotRequired, TypedDict
+from typing import Annotated, NotRequired
 
 from langchain.agents import AgentState
 
-
-class Mistake(TypedDict):
-    original: str
-    corrected: str
-    explanation: str
-
-
-class VocabularyItem(TypedDict):
-    word: str
-    meaning: str
-    example: str
+from app.domain.lessons.models import Mistake, VocabularyItem
 
 
 class TutorState(AgentState):

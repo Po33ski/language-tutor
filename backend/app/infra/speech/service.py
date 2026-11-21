@@ -1,23 +1,12 @@
 import asyncio
 import logging
-from typing import Protocol
 
 from app.config import Settings
-from app.speech.groq_stt import GroqTranscriber
-from app.speech.stt import WhisperTranscriber
-from app.speech.tts import KokoroSynthesizer
+from app.infra.speech.groq_stt import GroqTranscriber
+from app.infra.speech.stt import WhisperTranscriber
+from app.infra.speech.tts import KokoroSynthesizer
 
 logger = logging.getLogger(__name__)
-
-
-class SpeechService(Protocol):
-    async def transcribe(self, audio: bytes) -> str: ...
-
-    async def synthesize(self, text: str) -> bytes: ...
-
-    async def warm_up(self) -> None: ...
-
-    async def close(self) -> None: ...
 
 
 class DefaultSpeechService:

@@ -1,4 +1,4 @@
-from app.agent.prompts import KICKOFF_MESSAGE, build_system_prompt
+from app.infra.agent.prompts import KICKOFF_MESSAGE, build_system_prompt
 
 
 def test_prompt_includes_learner_context() -> None:

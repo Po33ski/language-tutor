@@ -2,11 +2,11 @@
 
 On the server (in `~/language-tutor/deploy`):
 
-    docker compose exec backend python -m app.auth.cli list-users
-    docker compose exec backend python -m app.auth.cli reset-password EMAIL
-    docker compose exec backend python -m app.auth.cli claim-profile EMAIL [--profile-id ID]
+    docker compose exec backend python -m app.cli list-users
+    docker compose exec backend python -m app.cli reset-password EMAIL
+    docker compose exec backend python -m app.cli claim-profile EMAIL [--profile-id ID]
 
-Locally: `uv run python -m app.auth.cli ...` from `backend/`. Safe to run while the
+Locally: `uv run python -m app.cli ...` from `backend/`. Safe to run while the
 backend is running (SQLite handles the concurrent access).
 """
 
@@ -16,13 +16,15 @@ import secrets
 import sys
 from datetime import datetime
 
-from langgraph.store.base import BaseStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-from app.auth.passwords import hash_password
-from app.auth.store import ProfileTakenError, User, UserStore
 from app.config import Settings
-from app.storage import memory
+from app.domain.accounts.models import ProfileTakenError, User, normalize_email
+from app.domain.learners.models import Profile
+from app.domain.ports import LearnerMemory
+from app.infra.persistence.learner_memory import LearnerMemoryStore
+from app.infra.persistence.users import UserStore
+from app.infra.security.passwords import hash_password
 
 
 def _fail(message: str) -> None:
@@ -31,18 +33,18 @@ def _fail(message: str) -> None:
 
 
 async def _require_user(users: UserStore, email: str) -> User:
-    credentials = await users.get_credentials(email.strip().lower())
+    credentials = await users.get_credentials(normalize_email(email))
     if credentials is None:
         _fail(f"no account with the email {email}")
     return credentials.user
 
 
-async def list_users(users: UserStore, store: BaseStore) -> None:
+async def list_users(users: UserStore, memory: LearnerMemory) -> None:
     accounts = await users.list_users()
     if not accounts:
         print("No accounts yet.")
     for user in accounts:
-        profile = await memory.get_profile(store, user.profile_id)
+        profile = await memory.get_profile(user.profile_id)
         name = profile.name if profile else "(no profile yet)"
         print(f"{user.email:40} {name:20} since {user.created_at:%Y-%m-%d}")
 
@@ -56,25 +58,25 @@ async def reset_password(users: UserStore, email: str) -> None:
     print("All sessions were signed out. Change it in the app (Account) after signing in.")
 
 
-async def _last_activity(store: BaseStore, profile: memory.Profile) -> datetime:
-    lessons = await memory.list_lessons(store, profile.id)
+async def _last_activity(memory: LearnerMemory, profile: Profile) -> datetime:
+    lessons = await memory.list_lessons(profile.id)
     return max((lesson.created_at for lesson in lessons), default=profile.created_at)
 
 
 async def claim_profile(
-    users: UserStore, store: BaseStore, email: str, profile_id: str | None, force: bool
+    users: UserStore, memory: LearnerMemory, email: str, profile_id: str | None, force: bool
 ) -> None:
     """Link a profile created before accounts existed (with its lessons and progress) to
     an account. Without --profile-id, the most recently used unclaimed profile is taken."""
     user = await _require_user(users, email)
     linked = await users.linked_profile_ids()
-    unclaimed = [p for p in await memory.list_profiles(store) if p.id not in linked]
+    unclaimed = [p for p in await memory.list_profiles() if p.id not in linked]
     if not unclaimed:
         print("There are no unclaimed profiles.")
         return
     print("Unclaimed profiles:")
     for profile in unclaimed:
-        lessons = await memory.list_lessons(store, profile.id)
+        lessons = await memory.list_lessons(profile.id)
         print(f"  {profile.id}  {profile.name:20} {len(lessons)} lesson(s)")
 
     if profile_id:
@@ -82,10 +84,10 @@ async def claim_profile(
         if chosen is None:
             _fail(f"{profile_id} is not an unclaimed profile")
     else:
-        activity = {p.id: await _last_activity(store, p) for p in unclaimed}
+        activity = {p.id: await _last_activity(memory, p) for p in unclaimed}
         chosen = max(unclaimed, key=lambda p: activity[p.id])
 
-    if await memory.get_profile(store, user.profile_id) is not None and not force:
+    if await memory.get_profile(user.profile_id) is not None and not force:
         _fail(
             "this account already has its own profile. Use --force to replace it "
             "(its lessons stay in the database but are no longer shown)."
@@ -98,7 +100,7 @@ async def claim_profile(
 
 
 async def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="python -m app.auth.cli", description=__doc__)
+    parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list-users", help="list accounts")
     reset = commands.add_parser("reset-password", help="set a temporary password")
@@ -115,12 +117,13 @@ async def main(argv: list[str] | None = None) -> None:
         AsyncSqliteStore.from_conn_string(str(settings.memory_db_path)) as store,
     ):
         await store.setup()
+        memory = LearnerMemoryStore(store)
         if args.command == "list-users":
-            await list_users(users, store)
+            await list_users(users, memory)
         elif args.command == "reset-password":
             await reset_password(users, args.email)
         else:
-            await claim_profile(users, store, args.email, args.profile_id, args.force)
+            await claim_profile(users, memory, args.email, args.profile_id, args.force)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -11,17 +10,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.language_models import BaseChatModel
 
-from app.agent.graph import build_model, build_tutor_agent
-from app.agent.summarizer import Summarizer, build_summarizer
-from app.agent.wrapup import end_stale_lessons
 from app.api import auth, health, lessons, profiles, speech
 from app.api.auth import AuthLimiters
 from app.api.security import RateLimiter
-from app.auth.store import UserStore
 from app.config import Settings, get_settings
-from app.safety.moderation import LocalModerator, Moderator
-from app.speech.service import DefaultSpeechService, SpeechService
-from app.storage.persistence import open_persistence
+from app.domain.accounts.service import AccountService
+from app.domain.lessons.service import LessonService
+from app.domain.ports import Moderator, SpeechService, Summarizer
+from app.infra.agent.graph import build_model, build_tutor_agent
+from app.infra.agent.summarizer import build_summarizer
+from app.infra.agent.tutor import LangGraphTutor
+from app.infra.moderation.classifier import LocalModerator
+from app.infra.persistence.connections import open_persistence
+from app.infra.persistence.learner_memory import LearnerMemoryStore
+from app.infra.persistence.users import UserStore
+from app.infra.security.passwords import Argon2Hasher, HibpBreachChecker
+from app.infra.speech.service import DefaultSpeechService
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +52,14 @@ def create_app(
             httpx.AsyncClient() as http,
         ):
             await users.purge()
-            app.state.users = users
-            app.state.http = http
-            app.state.auth_limiters = AuthLimiters.from_settings(settings)
             app.state.settings = settings
-            app.state.persistence = persistence
-            app.state.tutor = build_tutor_agent(
-                model or build_model(settings), persistence.checkpointer, persistence.store
+            app.state.users = users
+            app.state.accounts = AccountService(
+                users,
+                Argon2Hasher(),
+                HibpBreachChecker(http) if settings.password_breach_check else None,
             )
-            app.state.summarizer = summarizer or build_summarizer(settings)
-            app.state.lesson_locks = defaultdict(asyncio.Lock)
+            app.state.auth_limiters = AuthLimiters.from_settings(settings)
             app.state.rate_limiter = (
                 RateLimiter(settings.rate_limit_per_minute)
                 if settings.rate_limit_per_minute > 0
@@ -66,8 +68,22 @@ def create_app(
             app.state.speech = speech_service or (
                 DefaultSpeechService(settings) if settings.speech_enabled else None
             )
-            app.state.moderator = moderator or (
+            active_moderator = moderator or (
                 LocalModerator(settings.moderation_model) if settings.moderation_enabled else None
+            )
+            app.state.memory = LearnerMemoryStore(persistence.store)
+            app.state.lessons = LessonService(
+                memory=app.state.memory,
+                tutor=LangGraphTutor(
+                    build_tutor_agent(
+                        model or build_model(settings),
+                        persistence.checkpointer,
+                        persistence.store,
+                    )
+                ),
+                summarizer=summarizer or build_summarizer(settings),
+                moderator=active_moderator,
+                recent_summaries_count=settings.recent_summaries_count,
             )
             # Background jobs, so startup is not delayed: summarize lessons left open last
             # time, and load the speech and moderation models.
@@ -78,8 +94,8 @@ def create_app(
             ]
             if app.state.speech is not None:
                 background.append(asyncio.create_task(_warm_up_speech(app.state.speech)))
-            if app.state.moderator is not None:
-                background.append(asyncio.create_task(_warm_up_moderator(app.state.moderator)))
+            if active_moderator is not None:
+                background.append(asyncio.create_task(_warm_up_moderator(active_moderator)))
             yield
             for task in background:
                 task.cancel()
@@ -108,13 +124,7 @@ app = create_app()
 
 async def _end_stale_lessons(app: FastAPI, max_idle: timedelta) -> None:
     try:
-        ended = await end_stale_lessons(
-            app.state.persistence.store,
-            app.state.tutor,
-            app.state.summarizer,
-            app.state.lesson_locks,
-            max_idle,
-        )
+        ended = await app.state.lessons.end_stale(max_idle)
         if ended:
             logger.info("Ended %d stale lesson(s)", ended)
     except Exception:

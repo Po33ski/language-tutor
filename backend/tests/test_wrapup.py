@@ -2,7 +2,6 @@ from datetime import timedelta
 
 from langchain_core.messages import AIMessage
 
-from app.agent.wrapup import end_stale_lessons
 from tests.test_lessons import _send, _start_lesson
 
 
@@ -80,9 +79,7 @@ def test_stale_lessons_are_ended(make_client, profile_payload, summarizer) -> No
     state = client.app.state
 
     async def sweep(max_idle: timedelta) -> int:
-        return await end_stale_lessons(
-            state.persistence.store, state.tutor, state.summarizer, state.lesson_locks, max_idle
-        )
+        return await state.lessons.end_stale(max_idle)
 
     # A recently active lesson is left alone; an idle one is summarized.
     assert client.portal.call(sweep, timedelta(hours=1)) == 0

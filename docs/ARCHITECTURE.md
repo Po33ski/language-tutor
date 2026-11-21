@@ -11,16 +11,25 @@ English tutor: Next.js frontend, FastAPI backend, LangGraph agent on Claude Haik
 └───────────────┬──────────────────────────────────────────┘
                 │ REST + SSE (streamed replies)
 ┌───────────────▼──────── FastAPI (localhost:8000) ────────┐
-│ api/      profiles · lessons · chat (SSE) · stt · tts    │
-│ agent/    LangGraph graph (tutor + summarizer)           │
-│ speech/   Whisper (STT) + Kokoro (TTS), loaded once at   │
-│           startup on GPU                                 │
-│ storage/  SQLite: checkpointer (short-term)              │
-│                   + Store (long-term)                    │
+│ api/      routers, HTTP schemas, SSE, sessions, limits   │
+│ domain/   lessons · learners · accounts · moderation     │
+│           use cases and ports (plain Python + Pydantic)  │
+│ infra/    agent (LangGraph tutor + summarizer)           │
+│           persistence (SQLite: checkpointer + store)     │
+│           speech (Whisper + Kokoro) · moderation model   │
 └───────────────┬──────────────────────────────────────────┘
                 ▼
         Anthropic API (claude-haiku-5-5)
 ```
+
+## Backend layers
+
+Dependencies point inward: `api` → `domain` ← `infra`.
+
+- **`domain`** holds the rules and use cases (`LessonService`, `AccountService`, the lesson clock, the password and moderation policies) and declares what it needs from outside as protocols in `domain/ports.py`. It imports no web, agent or database library. Pydantic models are allowed there, because they are also the API's schemas and the stored format.
+- **`infra`** implements those ports: `LangGraphTutor`, `LlmSummarizer`, `LearnerMemoryStore`, `UserStore`, `LocalModerator`, `DefaultSpeechService`, `Argon2Hasher`, `HibpBreachChecker`.
+- **`api`** handles HTTP only: routing, schemas, sessions, rate limits, SSE, and mapping domain errors to status codes. It never imports `infra`.
+- **`main.py`** and **`cli.py`** are the only places that connect the layers. `tests/test_architecture.py` fails if a boundary is crossed.
 
 ## Accounts and authentication
 
@@ -46,8 +55,8 @@ every request: Authorization: Bearer <token> ──► SHA-256(token) looked up 
   - per account and per UTC day: tutor turns (`USER_DAILY_TUTOR_TURNS`, 200) and transcriptions (`USER_DAILY_TRANSCRIPTIONS`, 200); for the whole app: `DAILY_TUTOR_TURNS_TOTAL` (2000). Counted atomically in `users.db` (`daily_usage`);
   - in memory per IP: `SIGNUPS_PER_IP_PER_HOUR` (5, successful signups), 30 failed logins per 15 min; per email: 10 failed logins per 15 min (also guards the current-password check);
   - per IP per minute and endpoint group (`RATE_LIMIT_PER_MINUTE`, 30): tutor turns (`/messages`, `/end`), `/speech/transcribe`, `/speech/synthesize`.
-- **No email yet:** no verification and no reset links. A forgotten password is reset with an admin command on the server (`python -m app.auth.cli reset-password EMAIL`), which sets a temporary password and signs out every session.
-- **Profiles from before accounts** stay in the store unlinked; `python -m app.auth.cli claim-profile EMAIL` links the most recently used one (with its lessons and progress) to an account.
+- **No email yet:** no verification and no reset links. A forgotten password is reset with an admin command on the server (`python -m app.cli reset-password EMAIL`), which sets a temporary password and signs out every session.
+- **Profiles from before accounts** stay in the store unlinked; `python -m app.cli claim-profile EMAIL` links the most recently used one (with its lessons and progress) to an account.
 - **Frontend:** `AuthGate` (in the root layout) shows the sign-in / create-account screen until a stored token is confirmed by `GET /api/auth/me`, then provides the account through `useAccount()`. A new account goes straight to onboarding. Any 401 clears the token, which brings the sign-in screen back. `/account` changes the password and signs out.
 - **Browser hardening:** a Content-Security-Policy (`next.config.ts`) whose `connect-src` allows only the site and the API, so even injected script could not send the token elsewhere; no nonces, because nonces need fully dynamic rendering and Partial Prerendering is on. React escapes all rendered text.
 
@@ -92,7 +101,7 @@ START → tutor ──(tool calls?)──► tools ──► tutor → END
 
 The learner picks a lesson length (5–30 minutes, default 15) in the onboarding form and can change it later on the edit-profile page. A new lesson copies it into `Lesson.duration_minutes`; the clock runs from `Lesson.created_at` (the tutor's opening turn follows at once) on wall-clock time, with no pause.
 
-- **The tutor's view.** The system prompt must stay byte-identical for the whole lesson (thinking-block binding), so it holds only the fixed part: "This lesson lasts N minutes" and the rules for each phase. The ticking time travels with the learner's messages instead: `send_message` stores a clock note in each `HumanMessage.additional_kwargs["lesson_clock"]` (e.g. `[Lesson clock: 6 of 15 minutes used, about 9 left.]`), and the `LessonClockNotes` middleware shows it to the model in front of the message. The note is stored with its message, so earlier turns look the same on every call; the chat, `to_chat_messages` and the summarizer never see it. Logic: `app/agent/clock.py`.
+- **The tutor's view.** The system prompt must stay byte-identical for the whole lesson (thinking-block binding), so it holds only the fixed part: "This lesson lasts N minutes" and the rules for each phase. The ticking time travels with the learner's messages instead: `LessonService.run_turn` passes a clock note to `LangGraphTutor`, which stores it in each `HumanMessage.additional_kwargs["lesson_clock"]` (e.g. `[Lesson clock: 6 of 15 minutes used, about 9 left.]`), and the `LessonClockNotes` middleware shows it to the model in front of the message. The note is stored with its message, so earlier turns look the same on every call; the chat, `to_chat_messages` and the summarizer never see it. Logic: `app/domain/lessons/clock.py`, rendering: `app/infra/agent/clock_notes.py`.
 - **Phases** (computed by the server when a turn runs):
   - on track: normal lesson;
   - wrap up, the last 20% of the lesson (1–3 minutes): no new topics, finish the exchange, one thing done well and one to practice, at most one short final question;
@@ -103,7 +112,7 @@ The learner picks a lesson length (5–30 minutes, default 15) in the onboarding
 
 ### End of lesson (summarization)
 
-Done by the same model (Claude Haiku 5.5, effort `medium`) in `app/agent/summarizer.py`, orchestrated by `app/agent/wrapup.py`; ≈ 10 s and ≈ $0.003 per lesson.
+Done by the same model (Claude Haiku 5.5, effort `medium`) in `app/infra/agent/summarizer.py`, orchestrated by `LessonService` (`app/domain/lessons/service.py`); ≈ 10 s and ≈ $0.003 per lesson.
 
 **Triggers**
 - The user clicks "End lesson" → `POST /api/lessons/{id}/end` (idempotent; returns the updated lesson).
@@ -136,7 +145,7 @@ Done by the same model (Claude Haiku 5.5, effort `medium`) in `app/agent/summari
 | Long-term: profiles | Store (`data/memory.db`) | namespace `("profiles",)`, key `user_id` |
 | Long-term: lessons | Store | namespace `("lessons",)`, key `lesson_id`; value has `user_id`, `topic`, `status` (`active` / `summarized` / `discarded`), `ended_at`, `summary` |
 | Long-term: progress profile | Store | namespace `("users", user_id)`, key `"progress"` |
-| Accounts | `data/users.db` (plain SQLite, `app/auth/store.py`) | tables `users` (email, Argon2id hash, `profile_id`), `sessions` (SHA-256 of the token, expiry), `daily_usage` |
+| Accounts | `data/users.db` (plain SQLite, `app/infra/persistence/users.py`) | tables `users` (email, Argon2id hash, `profile_id`), `sessions` (SHA-256 of the token, expiry), `daily_usage` |
 
 The store's `user_id` is the account's `profile_id`, so the learning data did not change shape when accounts were added.
 
@@ -161,7 +170,7 @@ Checkpointer and store use separate SQLite files so their writes never contend f
 
 Every learner message (typed, or a voice transcript) goes through `Moderator.check` in `POST /api/lessons/{id}/messages` before the agent runs. The kickoff is not checked.
 
-- **Classifier:** `LocalModerator` in `app/safety/moderation.py` runs `unitary/unbiased-toxic-roberta` (the "unbiased" Detoxify model) through a Hugging Face `transformers` pipeline on the CPU: about 30 ms per message, loaded in a background task at startup (≈ 500 MB from Hugging Face on the first start; on the server it lands in the `tutor-models` volume). Messages longer than ~1,000 characters are scored in chunks; the highest score per label counts.
+- **Classifier:** `LocalModerator` in `app/infra/moderation/classifier.py` runs `unitary/unbiased-toxic-roberta` (the "unbiased" Detoxify model) through a Hugging Face `transformers` pipeline on the CPU: about 30 ms per message, loaded in a background task at startup (≈ 500 MB from Hugging Face on the first start; on the server it lands in the `tutor-models` volume). Messages longer than ~1,000 characters are scored in chunks; the highest score per label counts.
 - **Policy (`decide`):** quoted words are removed first, because a quoted word is mentioned, not used ("what does 'damn' mean?"). Then, in this order: threat ≥ 0.7, identity attack ≥ 0.5 (hate), severe toxicity ≥ 0.5 or insult ≥ 0.9 in a message that addresses someone ("you are…", "…, you idiot"), sexual ≥ 0.2. The first match names the category. The insult score alone cannot tell "this exercise is stupid" from "you are stupid", hence the addressing rule. Thresholds were picked on 37 typical learner messages.
 - **Blocked:** the endpoint answers with SSE `blocked` {message, category} and `done`; the agent is not called and nothing is stored. The client removes the message's bubble and shows the reason. A blocked attempt still counts toward the daily turn quota. The log line has the account, lesson, category and scores, not the text.
 - **Let through on purpose:** swearing out of frustration, insults not aimed at anyone, rude words being asked about. The tutor's prompt tells it to answer rudeness calmly and explain rude words neutrally.
@@ -174,15 +183,15 @@ Every learner message (typed, or a voice transcript) goes through `Moderator.che
 1. The learner clicks **Speak**; the browser records with MediaRecorder (webm/opus) until **Stop**.
 2. `POST /api/speech/transcribe` (multipart `audio`) → Whisper `large-v3-turbo`, English, no prompt → `{text}`. Where it runs depends on `STT_PROVIDER`:
    - `local`: `faster-whisper` in the backend process (VAD on);
-   - `groq`: Groq's hosted Whisper (`app/speech/groq_stt.py`), ≈ 1 s instead of 4–6 s on the server's CPU. If a Groq request fails, local Whisper (`WHISPER_MODEL`, `small` on the server) transcribes instead. Groq picks the format from the file name, so the upload is named after its magic bytes (`.webm` from Chrome/Android, `.mp4` from Safari/iOS).
+   - `groq`: Groq's hosted Whisper (`app/infra/speech/groq_stt.py`), ≈ 1 s instead of 4–6 s on the server's CPU. If a Groq request fails, local Whisper (`WHISPER_MODEL`, `small` on the server) transcribes instead. Groq picks the format from the file name, so the upload is named after its magic bytes (`.webm` from Chrome/Android, `.mp4` from Safari/iOS).
 3. The text is sent immediately as a chat message (no confirmation step).
 4. `POST /api/lessons/{id}/messages` → tutor reply streamed via SSE.
 5. With **Voice on**, the reply is read aloud **while it streams**: the frontend splits the streamed text into sentences (`lib/sentences.ts`) and `useSpeaker` sends each finished sentence to `POST /api/speech/synthesize` → Kokoro (`af_heart`) → WAV. Synthesis requests run one at a time, in order, so the server always works on the earliest sentence; playback follows in the same order through one reused `<audio>` element. The first sentence plays about a second after it is written instead of after the whole reply is synthesized. Every tutor message also has a replay button (same sentence pipeline).
 
 - A text input is always available as an alternative to the microphone.
 - Whisper keeps learner mistakes verbatim (tested: "I am work as developer since five years", "she have", "I have went"). An `initial_prompt` made it correct grammar, so none is used.
-- Both models run in the backend process on the GPU (`app/speech/`); blocking calls run in threads, and the models load in a background task at startup (first run downloads them from Hugging Face, ≈ 2 GB). Speed on an RTX 5070 Ti: ≈ 0.05 s to synthesize a reply, ≈ 1 s to transcribe an answer.
-- CUDA: PyTorch (Kokoro) ships CUDA 13 libraries, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS, provided by `nvidia-cublas-cu12` and preloaded in `app/speech/cuda.py`. `av` is pinned below 16 for `faster-whisper` 1.2.
+- Both models run in the backend process on the GPU (`app/infra/speech/`); blocking calls run in threads, and the models load in a background task at startup (first run downloads them from Hugging Face, ≈ 2 GB). Speed on an RTX 5070 Ti: ≈ 0.05 s to synthesize a reply, ≈ 1 s to transcribe an answer.
+- CUDA: PyTorch (Kokoro) ships CUDA 13 libraries, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS, provided by `nvidia-cublas-cu12` and preloaded in `app/infra/speech/cuda.py`. `av` is pinned below 16 for `faster-whisper` 1.2.
 - `SPEECH_ENABLED=false` turns speech off (the endpoints return 503).
 
 ## Deployment

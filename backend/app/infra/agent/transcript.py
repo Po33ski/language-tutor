@@ -1,18 +1,13 @@
 """Helpers for reading a lesson's conversation out of its LangGraph thread."""
 
 from collections.abc import Sequence
-from typing import Literal
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
-from pydantic import BaseModel
+
+from app.domain.lessons.models import ChatMessage
 
 # Id prefix of the hidden message that starts a lesson.
 KICKOFF_ID_PREFIX = "kickoff-"
-
-
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
 
 
 def thread_config(lesson_id: str) -> dict:
@@ -36,8 +31,3 @@ def to_chat_messages(messages: Sequence[AnyMessage]) -> list[ChatMessage]:
             else:
                 result.append(ChatMessage(role="assistant", content=message.text))
     return result
-
-
-def format_transcript(messages: Sequence[ChatMessage]) -> str:
-    speakers = {"user": "Learner", "assistant": "Tutor"}
-    return "\n\n".join(f"{speakers[m.role]}: {m.content}" for m in messages)
