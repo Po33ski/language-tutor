@@ -60,9 +60,16 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"  # "auto" | "cuda" | "cpu"
     # Kokoro voice; the first letter is the accent: "a" = American, "b" = British.
     tts_voice: str = "af_heart"
-    # Kokoro engine: "torch" (the full model) or "onnx" (its quantized build: about 2.3x
-    # faster on the CPU server, with a third of the memory).
-    tts_engine: Literal["torch", "onnx"] = "torch"
+    # Kokoro engine: "torch" (the full model), "onnx" (its quantized build: about 2.3x
+    # faster on the CPU server, with a third of the memory) or "deepinfra" (hosted and
+    # paid per character; the local full model stays the fallback).
+    tts_engine: Literal["torch", "onnx", "deepinfra"] = "torch"
+    deepinfra_api_key: str = ""
+    deepinfra_tts_model: str = "hexgrad/Kokoro-82M"
+    # Daily characters sent to the paid engine (UTC days). Past a limit, speech is
+    # synthesized locally. 0 = unlimited.
+    user_daily_hosted_tts_chars: int = 50_000
+    daily_hosted_tts_chars_total: int = 500_000
 
     # Moderation: a local toxicity classifier (Hugging Face) checks every learner message
     # before the tutor sees it; threats, hate, sexual messages and targeted insults are

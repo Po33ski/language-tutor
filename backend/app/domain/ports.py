@@ -91,7 +91,14 @@ class Moderator(Protocol):
 class SpeechService(Protocol):
     async def transcribe(self, audio: bytes) -> str: ...
 
-    async def synthesize(self, text: str) -> bytes: ...
+    @property
+    def hosted_tts_enabled(self) -> bool:
+        """Whether a paid hosted engine is configured."""
+        ...
+
+    async def synthesize(self, text: str, *, allow_hosted: bool = False) -> bytes:
+        """Speech as WAV. Only `allow_hosted=True` may use (and pay for) the hosted engine."""
+        ...
 
     async def warm_up(self) -> None: ...
 
@@ -117,7 +124,9 @@ class AccountStore(Protocol):
 
     async def delete_session(self, token_hash: str) -> None: ...
 
-    async def consume(self, day: date, scope: str, kind: str, limit: int) -> bool: ...
+    async def consume(
+        self, day: date, scope: str, kind: str, limit: int, amount: int = 1
+    ) -> bool: ...
 
 
 class PasswordHasher(Protocol):

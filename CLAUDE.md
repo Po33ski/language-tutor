@@ -57,7 +57,7 @@ More detail lives in other docs:
 | Lesson summary + progress profile | Claude Haiku 5.5 | Anthropic API | `SUMMARY_EFFORT=medium`; ≈ 10 s and ≈ $0.003 per lesson |
 | Speech to text | Whisper `large-v3-turbo`: locally with faster-whisper / CTranslate2, on the server hosted by Groq (local `small` as fallback) | local GPU, float16; server: Groq API, fallback CPU int8 | `STT_PROVIDER` (`local` / `groq`), `GROQ_API_KEY`, `GROQ_STT_MODEL`, `WHISPER_MODEL`, `WHISPER_DEVICE=auto` (`cpu` in the image) |
 | Moderation | `unitary/unbiased-toxic-roberta` (Detoxify "unbiased", Hugging Face `transformers`) | local and server CPU, ~30 ms per message | `MODERATION_ENABLED`, `MODERATION_MODEL` |
-| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV, one request per sentence | local GPU; server CPU (≈ 1 s per sentence) | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British), `TTS_ENGINE=torch` (default, the full model) or `onnx` (quantized, optional) |
+| Text to speech | Kokoro-82M (`hexgrad/Kokoro-82M`), 24 kHz WAV, one request per sentence | local GPU; server CPU (≈ 1 s per sentence) | `TTS_VOICE=af_heart` (first letter = accent: `a` American, `b` British), `TTS_ENGINE=torch` (default, the full model), `onnx` (quantized, optional) or `deepinfra` (hosted, paid, optional) |
 
 - The LLM is created with `init_chat_model("provider:model")`, so the provider can change through configuration alone. Haiku was chosen for cost; it may be replaced later.
 - The speech models download from Hugging Face on first run (≈ 2 GB). They load in a background task at startup. Calls block, so they run through `asyncio.to_thread`.
@@ -72,7 +72,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 | `config.py` | `Settings` + `get_settings()`. Data lives in `data/checkpoints.db`, `data/memory.db` and `data/users.db`. |
 | `cli.py` | Admin commands: `list-users`, `reset-password`, `claim-profile` (`python -m app.cli`) |
 | `api/deps.py` | FastAPI `Depends` aliases: `SettingsDep`, `MemoryDep`, `LessonsDep`, `AccountsDep`, `UsersDep`, `SpeechDep` (503 when speech is disabled). Endpoints never build resources themselves. |
-| `api/security.py` | `CurrentSessionDep` / `CurrentUserDep` (session from the Bearer token; 401 otherwise), `daily_quota(kind)` (per-account and app-wide daily limits in `users.db`), the in-memory `RateLimiter` (`allow`, or `is_limited` + `record` for failed logins) and `rate_limited(group)` per account: `tutor`, `transcribe`, `synthesize` |
+| `api/security.py` | `CurrentSessionDep` / `CurrentUserDep` (session from the Bearer token; 401 otherwise), `daily_quota(kind)` (per-account and app-wide daily limits in `users.db`), `HostedSpeechBudget` (daily characters for the paid speech engine), the in-memory `RateLimiter` (`allow`, or `is_limited` + `record` for failed logins) and `rate_limited(group)` per account: `tutor`, `transcribe`, `synthesize` |
 | `api/auth.py` | signup, login, logout, me, password change; `AuthLimiters` (signups per IP, failed logins per IP and per email) |
 | `api/{health,profiles,lessons,speech}.py` | Routers, all under the `/api` prefix: HTTP schemas and mapping domain errors to status codes. `lessons.py` turns the domain's turn events into SSE. |
 | `domain/ports.py` | Protocols the domain needs: `LearnerMemory`, `Tutor`, `Summarizer`, `Moderator`, `SpeechService`, `AccountStore`, `PasswordHasher`, `BreachChecker` |
@@ -94,7 +94,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 | `infra/moderation/classifier.py` | `LocalModerator` (Hugging Face classifier, loaded in the background at startup; fails open) |
 | `infra/persistence/` | `connections.py` (`open_persistence`: checkpointer + store), `learner_memory.py` (`LearnerMemoryStore`: profiles, lessons, progress), `users.py` (`UserStore`: aiosqlite on `data/users.db`, users / sessions / daily_usage, schema via `PRAGMA user_version`) |
 | `infra/security/passwords.py` | `Argon2Hasher` (Argon2id via pwdlib), `HibpBreachChecker` |
-| `infra/speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`, full PyTorch model), `tts_onnx.py` (`OnnxKokoroSynthesizer`, quantized, opt-in), `service.py` (`DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro behind a single-thread FIFO queue), `cuda.py` (CUDA 12 preload) |
+| `infra/speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`, full PyTorch model), `tts_onnx.py` (`OnnxKokoroSynthesizer`, quantized, opt-in), `deepinfra_tts.py` (`DeepInfraSynthesizer`, hosted and paid, opt-in), `service.py` (`DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro behind a single-thread FIFO queue), `cuda.py` (CUDA 12 preload) |
 
 ### Memory
 
@@ -134,6 +134,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 - **torch extras:** install with `uv sync --extra gpu` (local) or `--extra cpu` (server, CI); they conflict by design. A bare `uv sync` drops cuBLAS. In CI, `uv run` needs `UV_NO_SYNC=1`, or it re-syncs to the CUDA build.
 - **espeak-ng path limit:** Kokoro's espeak-ng fails when its data path (inside the venv) is longer than ~160 characters. Keep venvs at short paths (the image uses `/app/.venv`).
 - **ONNX Kokoro:** the full PyTorch model stays the default until the developer decides otherwise. `tts_onnx.py` pins the community model's revision and SHA-256. Use only `model_quantized.onnx`: `model_q8f16.onnx` produces broken audio.
+- **Paid hosted speech:** the local model stays the default. `SpeechService.synthesize` may call DeepInfra only with `allow_hosted=True`, set by the endpoint after `HostedSpeechBudget` accepts the characters. Never call it from warm-up or without that budget: one account could otherwise send 30 × 4000 characters a minute. DeepInfra is not free, and a successful call has not been tested with a real key yet.
 - **Pinned dependencies:**
   - `av` is pinned `>=14,<16`, because version 16+ breaks faster-whisper 1.2.
   - `en-core-web-sm` is a URL dependency in `pyproject.toml`, because otherwise misaki pip-installs it at runtime.

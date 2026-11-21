@@ -4,7 +4,7 @@ An English-learning app. An AI tutor runs a spoken or written conversation lesso
 
 - **Backend:** Python 3.12, FastAPI, LangGraph + LangChain, Claude Haiku 5.5
 - **Frontend:** Next.js 16, React, TypeScript, Tailwind CSS
-- **Speech:** Whisper `large-v3-turbo` (speech to text; locally on the GPU, or hosted by Groq), Kokoro-82M (text to speech, self-hosted; the full PyTorch model by default, with a quantized ONNX build available for testing and as an alternative). Replies are read aloud sentence by sentence while they stream.
+- **Speech:** Whisper `large-v3-turbo` (speech to text; locally on the GPU, or hosted by Groq), Kokoro-82M (text to speech, self-hosted; the full PyTorch model by default, with a quantized ONNX build for testing and as an alternative, and an optional paid hosted engine). Replies are read aloud sentence by sentence while they stream.
 - **Memory:** SQLite. Short-term memory is the LangGraph checkpointer; long-term memory is the LangGraph Store.
 
 Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Deployment (Vercel + Oracle Cloud, CI/CD with GitHub Actions) is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
@@ -208,6 +208,7 @@ Every learner message, typed or spoken, is checked before the tutor sees it ([`p
 
 > **The full PyTorch model is the default and the engine used in production.**
 > The quantized ONNX build is included **for testing and as an alternative**. It is off unless you set `TTS_ENGINE=onnx`.
+> Kokoro hosted by DeepInfra is a **paid option**, also off by default (see below).
 
 | | Full model (default) | Quantized ONNX (testing / alternative) |
 |---|---|---|
@@ -229,6 +230,18 @@ Both engines use the same phonemes, the same voice and the same synthesis queue.
 
 To try it, add `TTS_ENGINE=onnx` to `backend/.env` (locally) or `deploy/.env` (on the server, then run `docker compose up -d`). The first start downloads about 92 MB. To go back, set `TTS_ENGINE=torch` or remove the line.
 
+### Hosted Kokoro on DeepInfra (optional, paid)
+
+`TTS_ENGINE=deepinfra` sends each sentence to Kokoro-82M hosted by [DeepInfra](https://deepinfra.com/hexgrad/Kokoro-82M), which takes synthesis off the server's CPU. The app does not use it unless you turn it on.
+
+- **It is not free.** DeepInfra lists $0.99 per million characters (November 2026), about 0.6 cents for a lesson of 6000 characters, and requires a card or a prepaid balance. Its pages mention no free tier.
+- **Cost limits:** at most `USER_DAILY_HOSTED_TTS_CHARS` per account and `DAILY_HOSTED_TTS_CHARS_TOTAL` for the app per UTC day. With the defaults the app can spend at most about $0.50 a day. Also set a spending limit in your DeepInfra account.
+- **Fallback:** past a limit, or if DeepInfra fails, the sentence is synthesized by the local full model, so the voice keeps working.
+- **Privacy:** the text of the tutor's replies leaves the server. DeepInfra's model page states "Zero retention".
+- **Not yet tried with a real key:** the request format follows DeepInfra's docs, and a rejected key correctly falls back to the local model, but a successful call, its latency and the sound of the voice still need checking.
+
+To try it, set `DEEPINFRA_API_KEY=...` and `TTS_ENGINE=deepinfra` in `backend/.env` or `deploy/.env` (on the server, then run `docker compose up -d`). To go back, set `TTS_ENGINE=torch`.
+
 ## Configuration
 
 Backend settings are read from `backend/.env` (see [`backend/.env.example`](backend/.env.example)):
@@ -245,7 +258,9 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `GROQ_API_KEY` / `GROQ_STT_MODEL` | – / `whisper-large-v3-turbo` | Groq API key ([console.groq.com](https://console.groq.com/keys)) and model, used when `STT_PROVIDER=groq`. |
 | `WHISPER_MODEL` / `WHISPER_DEVICE` | `large-v3-turbo` / `auto` | Local speech-to-text model and device (`auto`, `cuda`, `cpu`). |
 | `TTS_VOICE` | `af_heart` | Kokoro voice; the first letter is the accent (`a` = American, `b` = British). |
-| `TTS_ENGINE` | `torch` | Kokoro engine: `torch` (the full model) or `onnx` (its quantized build, about 2.3× faster on the 4-core ARM server, with a third of the memory). |
+| `TTS_ENGINE` | `torch` | Kokoro engine: `torch` (the full model), `onnx` (its quantized build, about 2.3× faster on the 4-core ARM server, with a third of the memory) or `deepinfra` (hosted, **paid**, local fallback). |
+| `DEEPINFRA_API_KEY` / `DEEPINFRA_TTS_MODEL` | – / `hexgrad/Kokoro-82M` | Key and model for `TTS_ENGINE=deepinfra`. |
+| `USER_DAILY_HOSTED_TTS_CHARS` / `DAILY_HOSTED_TTS_CHARS_TOTAL` | `50000` / `500000` | Characters sent to the paid engine per account and for the app per UTC day; past a limit, speech is local. `0` = unlimited. |
 | `MODERATION_ENABLED` / `MODERATION_MODEL` | `true` / `unitary/unbiased-toxic-roberta` | Checks every learner message before the tutor sees it (see [Moderation](#moderation)). |
 | `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | `30` / `90` | A session ends after this many idle days, and after the maximum in any case. |
 | `PASSWORD_BREACH_CHECK` | `true` | Reject passwords known from breaches (Have I Been Pwned; only 5 characters of the SHA-1 hash leave the server). |

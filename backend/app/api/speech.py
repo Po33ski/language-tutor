@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, sta
 from pydantic import BaseModel, Field
 
 from app.api.deps import SpeechDep
-from app.api.security import daily_quota, get_current_user, rate_limited
+from app.api.security import (
+    HostedSpeechBudgetDep,
+    daily_quota,
+    get_current_user,
+    rate_limited,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +54,13 @@ async def transcribe(audio: UploadFile, speech: SpeechDep) -> TranscriptionRespo
     response_class=Response,
     responses={200: {"content": {"audio/wav": {}}}},
 )
-async def synthesize(body: SynthesisRequest, speech: SpeechDep) -> Response:
+async def synthesize(
+    body: SynthesisRequest, speech: SpeechDep, budget: HostedSpeechBudgetDep
+) -> Response:
     """Read text aloud with the tutor's voice; returns a WAV file."""
     try:
-        audio = await speech.synthesize(body.text)
+        allow_hosted = speech.hosted_tts_enabled and await budget.allows(len(body.text))
+        audio = await speech.synthesize(body.text, allow_hosted=allow_hosted)
     except Exception as error:
         logger.exception("Speech synthesis failed")
         raise HTTPException(

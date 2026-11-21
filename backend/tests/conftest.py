@@ -58,6 +58,8 @@ class FakeSpeech:
 
     def __init__(self) -> None:
         self.transcript = "I am work as developer"
+        self.hosted_tts_enabled = False
+        self.hosted_flags: list[bool] = []
         self.fail = False
 
     async def transcribe(self, audio: bytes) -> str:
@@ -65,7 +67,8 @@ class FakeSpeech:
             raise RuntimeError("model unavailable")
         return self.transcript
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, *, allow_hosted: bool = False) -> bytes:
+        self.hosted_flags.append(allow_hosted)
         if self.fail:
             raise RuntimeError("model unavailable")
         return b"RIFF" + text.encode()

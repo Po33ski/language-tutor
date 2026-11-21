@@ -237,14 +237,16 @@ class UserStore:
 
     # --- Usage limits ------------------------------------------------------------
 
-    async def consume(self, day: date, scope: str, kind: str, limit: int) -> bool:
-        """Count one use of `kind` for `scope` (a user id, or "*" for the whole app) and
-        return False, without counting, once today's `limit` is reached."""
+    async def consume(self, day: date, scope: str, kind: str, limit: int, amount: int = 1) -> bool:
+        """Count `amount` uses of `kind` for `scope` (a user id, or "*" for the whole app)
+        and return False, without counting, if that would exceed today's `limit`."""
+        if amount > limit:
+            return False
         cursor = await self._db.execute(
-            "INSERT INTO daily_usage (day, scope, kind, count) VALUES (?, ?, ?, 1)"
-            " ON CONFLICT (day, scope, kind) DO UPDATE SET count = count + 1"
-            " WHERE count < ?",
-            (day.isoformat(), scope, kind, limit),
+            "INSERT INTO daily_usage (day, scope, kind, count) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT (day, scope, kind) DO UPDATE SET count = count + excluded.count"
+            " WHERE count + excluded.count <= ?",
+            (day.isoformat(), scope, kind, amount, limit),
         )
         await self._db.commit()
         return cursor.rowcount == 1

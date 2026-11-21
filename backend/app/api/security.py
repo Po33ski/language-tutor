@@ -83,6 +83,36 @@ def daily_quota(kind: str) -> Callable:
     return dependency
 
 
+class HostedSpeechBudget:
+    """The daily character budget for the paid speech engine, per account and app-wide.
+
+    One account could otherwise send 30 requests of 4000 characters a minute all day.
+    """
+
+    KIND = "hosted_tts_chars"
+
+    def __init__(self, user: CurrentUserDep, users: UsersDep, settings: SettingsDep) -> None:
+        self._user = user
+        self._users = users
+        self._settings = settings
+
+    async def allows(self, characters: int) -> bool:
+        """Count `characters` against today's limits; False if they do not fit."""
+        today = datetime.now(UTC).date()
+        for scope, limit in (
+            (self._user.id, self._settings.user_daily_hosted_tts_chars),
+            ("*", self._settings.daily_hosted_tts_chars_total),
+        ):
+            if limit and not await self._users.consume(
+                today, scope, self.KIND, limit, amount=characters
+            ):
+                return False
+        return True
+
+
+HostedSpeechBudgetDep = Annotated[HostedSpeechBudget, Depends()]
+
+
 class RateLimiter:
     """Sliding-window request limit per client, kept in memory.
 
