@@ -97,6 +97,17 @@ START → tutor ──(tool calls?)──► tools ──► tutor → END
 - **Correction quality:** rules in the prompt (one natural version, smallest change, check prepositions/articles/collocations, ask instead of guessing) were checked on 15 typical learner sentences, 7 of them not mentioned in the prompt and 1 already correct.
 - **Corrections UX:** the tutor mentions a correction briefly and naturally in its reply; full details (original, corrected, explanation) are shown in a side panel fed by `mistakes`.
 
+### Long lessons (compaction)
+
+A normal lesson starts at about 2,400 input tokens and grows by about 290 per turn, so a 30-minute lesson of 45 turns reaches about 15,000. Compaction exists for unusually long lessons and for abuse: signup is open, and without it 200 maximum-length messages in one lesson would reach about 260,000 tokens per call. Haiku 5.5 input also costs five times more above 100,000 tokens.
+
+- **Trigger:** at the start of a turn, `LessonCompaction` (`app/infra/agent/compaction.py`) estimates the next call from the last call's real `input_tokens` plus the newer messages. At `LESSON_COMPACT_TOKENS` (30,000) it summarizes the oldest turns with Haiku at low effort, and keeps about `LESSON_KEEP_TOKENS` (10,000) word for word. Each new summary builds on the previous one.
+- **Only the model's view changes.** `messages` in the state stays complete, because the chat and the side panel read it. The state adds `earlier_summary` and `compacted_messages` (how many leading messages the summary replaces). LangChain's `SummarizationMiddleware` is not used because it deletes messages from state.
+- **Prompt stability:** the summary is a message, so the system prompt stays byte-identical. Thinking blocks from before a new summary are dropped by the API (`prefix_mismatch_behavior: drop_block`).
+- **Safe cuts:** a cut is always at a learner message, so tool calls stay with their results, and the current message is always kept.
+- **Failure:** if a summary fails, the turn continues with the full history and the next turn tries again.
+- **End of lesson:** the lesson summary reads the compacted summary plus the later turns, so that call stays bounded too.
+
 ### Lesson length (the lesson clock)
 
 The learner picks a lesson length (5–30 minutes, default 15) in the onboarding form and can change it later on the edit-profile page. A new lesson copies it into `Lesson.duration_minutes`; the clock runs from `Lesson.created_at` (the tutor's opening turn follows at once) on wall-clock time, with no pause.

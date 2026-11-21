@@ -13,6 +13,7 @@ from app.domain.lessons.models import (
     Lesson,
     LessonBusyError,
     LessonContext,
+    LessonConversation,
     LessonEndedError,
     LessonNotFoundError,
     LessonStatus,
@@ -43,6 +44,18 @@ def _clock(lesson: Lesson) -> LessonClock | None:
 def format_transcript(messages: Sequence[ChatMessage]) -> str:
     speakers = {"user": "Learner", "assistant": "Tutor"}
     return "\n\n".join(f"{speakers[m.role]}: {m.content}" for m in messages)
+
+
+def _lesson_transcript(conversation: LessonConversation) -> str:
+    """For the end-of-lesson summary. In a long lesson the oldest turns come as their
+    summary, so this call stays affordable too."""
+    recent = format_transcript(conversation.recent_messages)
+    if not conversation.earlier_summary:
+        return recent
+    return (
+        f"Summary of the earlier part of the lesson:\n{conversation.earlier_summary}\n\n"
+        f"Transcript of the rest:\n{recent}"
+    )
 
 
 class LessonService:
@@ -195,7 +208,7 @@ class LessonService:
         lesson.summary = await self._summarizer.summarize(
             profile=profile,
             topic=lesson.topic,
-            transcript=format_transcript(messages),
+            transcript=_lesson_transcript(conversation),
             mistakes=conversation.mistakes,
             vocabulary=conversation.vocabulary,
         )

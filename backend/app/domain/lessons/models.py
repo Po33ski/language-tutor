@@ -80,6 +80,9 @@ class LessonConversation:
     vocabulary: list[VocabularyItem]
     # When the lesson's state last changed; None before the first turn.
     last_activity: datetime | None
+    # Long lessons: the summary of the oldest turns, and the turns after it.
+    earlier_summary: str
+    recent_messages: list[ChatMessage]
 
 
 @dataclass(frozen=True)

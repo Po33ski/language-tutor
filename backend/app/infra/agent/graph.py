@@ -18,6 +18,7 @@ from langgraph.store.base import BaseStore
 
 from app.config import Settings
 from app.infra.agent.clock_notes import with_clock_notes
+from app.infra.agent.compaction import LessonCompaction
 from app.infra.agent.prompts import build_system_prompt
 from app.infra.agent.state import TutorState
 from app.infra.agent.tools import TUTOR_TOOLS
@@ -78,12 +79,19 @@ def build_model(settings: Settings) -> BaseChatModel:
     )
 
 
-def build_tutor_agent(model: BaseChatModel, checkpointer: BaseCheckpointSaver, store: BaseStore):
+def build_tutor_agent(
+    model: BaseChatModel,
+    checkpointer: BaseCheckpointSaver,
+    store: BaseStore,
+    compaction: LessonCompaction | None = None,
+):
     """The tutor: a tool-calling agent whose state is one lesson (thread_id = lesson id)."""
+    # Compaction comes before the clock notes, which are added to the messages it keeps.
+    history = [compaction] if compaction is not None else []
     return create_agent(
         model,
         tools=TUTOR_TOOLS,
-        middleware=[tutor_prompt, LessonClockNotes(), end_turn_if_already_replied],
+        middleware=[tutor_prompt, *history, LessonClockNotes(), end_turn_if_already_replied],
         state_schema=TutorState,
         checkpointer=checkpointer,
         store=store,

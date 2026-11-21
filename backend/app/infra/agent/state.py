@@ -22,3 +22,7 @@ class TutorState(AgentState):
     previous_summaries: NotRequired[list[dict]]
     mistakes: NotRequired[Annotated[list[Mistake], operator.add]]
     vocabulary: NotRequired[Annotated[list[VocabularyItem], operator.add]]
+    # Long lessons: the first `compacted_messages` messages reach the model only as
+    # `earlier_summary`. They stay in `messages`, which the chat reads.
+    earlier_summary: NotRequired[str]
+    compacted_messages: NotRequired[int]

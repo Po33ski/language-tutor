@@ -17,6 +17,7 @@ from app.config import Settings, get_settings
 from app.domain.accounts.service import AccountService
 from app.domain.lessons.service import LessonService
 from app.domain.ports import Moderator, SpeechService, Summarizer
+from app.infra.agent.compaction import build_compaction
 from app.infra.agent.graph import build_model, build_tutor_agent
 from app.infra.agent.summarizer import build_summarizer
 from app.infra.agent.tutor import LangGraphTutor
@@ -79,6 +80,7 @@ def create_app(
                         model or build_model(settings),
                         persistence.checkpointer,
                         persistence.store,
+                        compaction=build_compaction(settings, model),
                     )
                 ),
                 summarizer=summarizer or build_summarizer(settings),

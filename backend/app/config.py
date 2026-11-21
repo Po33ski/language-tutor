@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     # How many recent lesson summaries the tutor sees at lesson start.
     recent_summaries_count: int = 3
+    # Long lessons: when a model call would exceed this many input tokens, the oldest
+    # turns reach the model as a summary (the saved transcript stays whole). 0 = never.
+    # A normal 30-minute lesson stays well below it.
+    lesson_compact_tokens: int = 30_000
+    # How many tokens of the most recent conversation are kept word for word.
+    lesson_keep_tokens: int = 10_000
     # Active lessons idle for longer than this are summarized automatically at startup.
     stale_lesson_hours: float = 6
     cors_origins: list[str] = ["http://localhost:3000"]

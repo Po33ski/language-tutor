@@ -213,6 +213,7 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `ANTHROPIC_API_KEY` | – | Required. |
 | `LLM_MODEL` | `anthropic:claude-haiku-5-5` | LangChain model id (`provider:model`). |
 | `TUTOR_EFFORT` / `SUMMARY_EFFORT` | `low` / `medium` | Reasoning effort for tutor replies and summaries. |
+| `LESSON_COMPACT_TOKENS` / `LESSON_KEEP_TOKENS` | `30000` / `10000` | Above the first value, the oldest turns reach the model as a summary (`0` = never); the second is how much recent conversation stays word for word. The saved transcript stays whole. |
 | `STALE_LESSON_HOURS` | `6` | Lessons idle for longer are summarized automatically at startup. |
 | `SPEECH_ENABLED` | `true` | Turns the speech endpoints on or off. |
 | `STT_PROVIDER` | `local` | Speech to text: `local` (Whisper in the backend) or `groq` (Groq's hosted Whisper; local Whisper is the fallback). |

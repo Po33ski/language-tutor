@@ -82,10 +82,11 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 | `domain/learners/models.py` | `Profile`, `ProfileCreate`, `Progress`, `EnglishLevel`, lesson length limits |
 | `domain/accounts/` | `models.py` (`User`, errors), `passwords.py` (NIST policy), `service.py` (`AccountService`: register, verify credentials, change password) |
 | `domain/moderation/policy.py` | `decide` (thresholds, insults blocked only when addressed), `strip_quoted`, `BLOCKED_MESSAGES`, `ModerationVerdict` |
-| `infra/agent/graph.py` | `build_model`, `build_tutor_agent` (`create_agent` + middleware `tutor_prompt`, `LessonClockNotes` and `end_turn_if_already_replied`) |
+| `infra/agent/graph.py` | `build_model`, `build_tutor_agent` (`create_agent` + middleware `tutor_prompt`, `LessonCompaction`, `LessonClockNotes` and `end_turn_if_already_replied`) |
 | `infra/agent/tutor.py` | `LangGraphTutor` (the `Tutor` port): the initial lesson state, learner messages with clock notes, graph stream → domain events |
-| `infra/agent/state.py` | `TutorState(AgentState)`: `user_id`, `profile`, `topic`, `progress`, `previous_summaries`, plus append-only `mistakes` and `vocabulary` lists |
+| `infra/agent/state.py` | `TutorState(AgentState)`: `user_id`, `profile`, `topic`, `progress`, `previous_summaries`, plus append-only `mistakes` and `vocabulary` lists, and `earlier_summary` + `compacted_messages` for long lessons |
 | `infra/agent/prompts.py` | `TUTOR_SYSTEM_PROMPT`, `build_system_prompt(state)` (includes the fixed lesson length and the phase rules), and `KICKOFF_MESSAGE = "[START_LESSON]"` |
+| `infra/agent/compaction.py` | `LessonCompaction`: above `LESSON_COMPACT_TOKENS` the oldest turns reach the model as a rolling summary; the state keeps every message |
 | `infra/agent/clock_notes.py` | `CLOCK_NOTE_KEY`, `with_clock_notes` (used by the `LessonClockNotes` middleware) |
 | `infra/agent/tools.py` | `record_mistake` and `add_vocabulary` return `Command(update=...)` with a `ToolMessage`. `save_preference` writes to the store. |
 | `infra/agent/transcript.py` | `thread_config(lesson_id)` and `to_chat_messages`, which hides the kickoff and tool messages and merges consecutive assistant texts |
@@ -135,6 +136,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 - **Pinned dependencies:**
   - `av` is pinned `>=14,<16`, because version 16+ breaks faster-whisper 1.2.
   - `en-core-web-sm` is a URL dependency in `pyproject.toml`, because otherwise misaki pip-installs it at runtime.
+- **Long lessons:** never delete old messages from state, and do not use LangChain's `SummarizationMiddleware` (it removes them): the chat, the side panel and `to_chat_messages` read the whole conversation from state. `LessonCompaction` changes only the model's view. The summary is a message, never part of the system prompt. Cuts happen only at a learner message, so a tool call is never separated from its result. A failed summary must not cost the learner a reply.
 - **Auto-ending stale lessons:** lessons are ended automatically only after `STALE_LESSON_HOURS` (6) of inactivity. The threshold keeps `uvicorn --reload` restarts from closing lessons that are in progress.
 
 ### Tests (`backend/tests/`)

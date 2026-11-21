@@ -81,6 +81,8 @@ class LangGraphTutor:
             last_activity=(
                 datetime.fromisoformat(snapshot.created_at) if snapshot.created_at else None
             ),
+            earlier_summary=values.get("earlier_summary", ""),
+            recent_messages=to_chat_messages(messages[values.get("compacted_messages", 0) :]),
         )
 
     def start(self, lesson_id: str, context: LessonContext) -> AsyncIterator[TutorEvent]:
