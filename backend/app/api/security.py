@@ -139,16 +139,20 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def rate_limited(group: str) -> Callable[[Request], None]:
+def rate_limited(group: str) -> Callable:
     """A dependency limiting one group of endpoints that cost money (LLM calls) or a lot
-    of CPU (speech models). Each group has its own budget per client, so reading a reply
-    aloud sentence by sentence does not use up the budget for tutor turns."""
+    of CPU (speech models).
 
-    def dependency(request: Request) -> None:
+    The budget is per account, so people sharing a network (home, office, school) do not
+    use up each other's. Each group has its own, so reading a reply aloud sentence by
+    sentence does not use up the budget for tutor turns.
+    """
+
+    def dependency(request: Request, user: CurrentUserDep) -> None:
         limiter: RateLimiter | None = request.app.state.rate_limiter
         if limiter is None:
             return
-        if not limiter.allow(f"{group}:{client_ip(request)}"):
+        if not limiter.allow(f"{group}:{user.id}"):
             raise HTTPException(
                 status.HTTP_429_TOO_MANY_REQUESTS,
                 "Too many requests. Wait a minute and try again.",

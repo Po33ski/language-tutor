@@ -1,6 +1,7 @@
 from langchain_core.messages import AIMessage
 
 from app.api.security import RateLimiter
+from tests.conftest import sign_up
 from tests.test_lessons import _send, _start_lesson
 
 
@@ -58,6 +59,16 @@ def test_speech_is_rate_limited(make_client) -> None:
     # Each endpoint group has its own budget: transcription still works.
     files = {"audio": ("answer.webm", b"audio", "audio/webm")}
     assert client.post("/api/speech/transcribe", files=files).status_code == 200
+
+
+def test_rate_limit_is_per_account_not_per_network(make_client) -> None:
+    client = make_client([], rate_limit_per_minute=2)
+    for _ in range(2):
+        assert client.post("/api/speech/synthesize", json={"text": "Hi"}).status_code == 200
+    assert client.post("/api/speech/synthesize", json={"text": "Hi"}).status_code == 429
+
+    sign_up(client, email="bob@example.com")  # another account from the same IP
+    assert client.post("/api/speech/synthesize", json={"text": "Hi"}).status_code == 200
 
 
 def test_daily_transcription_limit_per_user(make_client) -> None:

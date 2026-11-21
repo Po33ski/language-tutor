@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from app.config import Settings
 from app.infra.speech.groq_stt import GroqTranscriber
@@ -13,12 +14,16 @@ class DefaultSpeechService:
     """Kokoro TTS in this process. STT with local Whisper, or with Groq's hosted Whisper
     (`STT_PROVIDER=groq`), falling back to local Whisper when a Groq request fails.
 
-    Blocking model calls run in threads.
+    Blocking model calls run in threads. Kokoro has its own single worker thread: its
+    executor is a first-in, first-out queue held in this process's memory, so sentences
+    from different users take turns, and a waiting sentence does not occupy a thread of
+    the shared pool that moderation and password hashing also need.
     """
 
     def __init__(self, settings: Settings, groq: GroqTranscriber | None = None) -> None:
         self._local_stt = WhisperTranscriber(settings.whisper_model, settings.whisper_device)
         self._tts = KokoroSynthesizer(settings.tts_voice)
+        self._tts_queue = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts")
         self._groq = groq
         if self._groq is None and settings.stt_provider == "groq":
             if settings.groq_api_key:
@@ -35,7 +40,8 @@ class DefaultSpeechService:
         return await asyncio.to_thread(self._local_stt.transcribe, audio)
 
     async def synthesize(self, text: str) -> bytes:
-        return await asyncio.to_thread(self._tts.synthesize, text)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._tts_queue, self._tts.synthesize, text)
 
     async def warm_up(self) -> None:
         """Load the models (downloading them on first run) so the first request is fast.
@@ -53,5 +59,6 @@ class DefaultSpeechService:
         return "groq" if self._groq is not None else "local"
 
     async def close(self) -> None:
+        self._tts_queue.shutdown(wait=False, cancel_futures=True)
         if self._groq is not None:
             await self._groq.close()

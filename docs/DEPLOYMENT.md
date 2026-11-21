@@ -33,7 +33,7 @@ Each workflow runs only when its part of the repo changed (`backend/` + `deploy/
 ## Security model
 
 - **Accounts:** anyone can sign up (email + password); every endpoint except health, signup and login needs a session token. Passwords are Argon2id hashes; sessions are stored as SHA-256 hashes in `users.db`. Details: [ARCHITECTURE.md](ARCHITECTURE.md#accounts-and-authentication).
-- **Cost limits** (because signup is open): tutor turns and transcriptions per account per day, tutor turns for the whole app per day, signups per network per hour (`USER_DAILY_*`, `DAILY_TUTOR_TURNS_TOTAL`, `SIGNUPS_PER_IP_PER_HOUR` in `deploy/.env`), plus `RATE_LIMIT_PER_MINUTE` per IP.
+- **Cost limits** (because signup is open): tutor turns and transcriptions per account per day, tutor turns for the whole app per day, signups per network per hour (`USER_DAILY_*`, `DAILY_TUTOR_TURNS_TOTAL`, `SIGNUPS_PER_IP_PER_HOUR` in `deploy/.env`), plus `RATE_LIMIT_PER_MINUTE` per account.
 - **Spend limit:** set a monthly limit in the Anthropic console as the last line of defence.
 - **Secrets:** the Anthropic and Groq keys live only in `deploy/.env` on the server. GitHub stores only the SSH key and the Vercel token.
 

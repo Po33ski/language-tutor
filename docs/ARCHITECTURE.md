@@ -54,7 +54,7 @@ every request: Authorization: Bearer <token> ──► SHA-256(token) looked up 
 - **Abuse limits** (signup is open, and each turn costs LLM tokens):
   - per account and per UTC day: tutor turns (`USER_DAILY_TUTOR_TURNS`, 200) and transcriptions (`USER_DAILY_TRANSCRIPTIONS`, 200); for the whole app: `DAILY_TUTOR_TURNS_TOTAL` (2000). Counted atomically in `users.db` (`daily_usage`);
   - in memory per IP: `SIGNUPS_PER_IP_PER_HOUR` (5, successful signups), 30 failed logins per 15 min; per email: 10 failed logins per 15 min (also guards the current-password check);
-  - per IP per minute and endpoint group (`RATE_LIMIT_PER_MINUTE`, 30): tutor turns (`/messages`, `/end`), `/speech/transcribe`, `/speech/synthesize`.
+  - per account per minute and endpoint group (`RATE_LIMIT_PER_MINUTE`, 30; not per IP, so people on one network do not share a budget): tutor turns (`/messages`, `/end`), `/speech/transcribe`, `/speech/synthesize`.
 - **No email yet:** no verification and no reset links. A forgotten password is reset with an admin command on the server (`python -m app.cli reset-password EMAIL`), which sets a temporary password and signs out every session.
 - **Profiles from before accounts** stay in the store unlinked; `python -m app.cli claim-profile EMAIL` links the most recently used one (with its lessons and progress) to an account.
 - **Frontend:** `AuthGate` (in the root layout) shows the sign-in / create-account screen until a stored token is confirmed by `GET /api/auth/me`, then provides the account through `useAccount()`. A new account goes straight to onboarding. Any 401 clears the token, which brings the sign-in screen back. `/account` changes the password and signs out.
@@ -203,6 +203,7 @@ Every learner message (typed, or a voice transcript) goes through `Moderator.che
 - Whisper keeps learner mistakes verbatim (tested: "I am work as developer since five years", "she have", "I have went"). An `initial_prompt` made it correct grammar, so none is used.
 - Both models run in the backend process on the GPU (`app/infra/speech/`); blocking calls run in threads, and the models load in a background task at startup (first run downloads them from Hugging Face, ≈ 2 GB). Speed on an RTX 5070 Ti: ≈ 0.05 s to synthesize a reply, ≈ 1 s to transcribe an answer.
 - CUDA: PyTorch (Kokoro) ships CUDA 13 libraries, but CTranslate2 (Whisper) needs CUDA 12 cuBLAS, provided by `nvidia-cublas-cu12` and preloaded in `app/infra/speech/cuda.py`. `av` is pinned below 16 for `faster-whisper` 1.2.
+- **Synthesis queue:** Kokoro handles one sentence at a time, so `DefaultSpeechService` gives it a single worker thread (`ThreadPoolExecutor(max_workers=1)`). The executor's queue is first-in, first-out and lives in the backend process's memory. The browser sends a user's next sentence only after the previous one returns, so users take turns. A waiting sentence holds no thread of the shared pool, which moderation and password hashing also use. Queued sentences are lost on restart; the browser skips them.
 - `SPEECH_ENABLED=false` turns speech off (the endpoints return 503).
 
 ## Deployment

@@ -114,7 +114,7 @@ Sending `content: null` **starts the lesson**: the tutor greets the learner and 
 | **409** | The lesson has already ended, or the tutor is still answering (one turn at a time per lesson). |
 | **422** | Invalid input, e.g. an empty message or an empty recording. |
 | **413** | The recording is larger than 10 MB. |
-| **429** | Daily limit reached (per account or for the whole app), too many signups from one network or failed logins, or a rate limit hit (`RATE_LIMIT_PER_MINUTE` per client IP, counted separately for tutor turns (`/messages` + `/end`), `/speech/transcribe` and `/speech/synthesize`). |
+| **429** | Daily limit reached (per account or for the whole app), too many signups from one network or failed logins, or a rate limit hit (`RATE_LIMIT_PER_MINUTE` per account, counted separately for tutor turns (`/messages` + `/end`), `/speech/transcribe` and `/speech/synthesize`). |
 | **502** | The lesson summary could not be generated; the lesson stays open and can be ended again. |
 | **503** | Speech is disabled (`SPEECH_ENABLED=false`). |
 
@@ -226,5 +226,5 @@ Backend settings are read from `backend/.env` (see [`backend/.env.example`](back
 | `USER_DAILY_TUTOR_TURNS` / `DAILY_TUTOR_TURNS_TOTAL` | `200` / `2000` | Tutor turns per account and for the whole app per UTC day; `0` = unlimited. |
 | `USER_DAILY_TRANSCRIPTIONS` | `200` | Speech-to-text requests per account per day. |
 | `SIGNUPS_PER_IP_PER_HOUR` | `5` | New accounts per network per hour. |
-| `RATE_LIMIT_PER_MINUTE` | `30` | Requests per minute per client IP, for each group: tutor turns, transcription, synthesis; `0` = unlimited. |
+| `RATE_LIMIT_PER_MINUTE` | `30` | Requests per minute per account, for each group: tutor turns, transcription, synthesis; `0` = unlimited. |
 | `CORS_ORIGINS` / `CORS_ORIGIN_REGEX` | `["http://localhost:3000"]` / none | Origins allowed to call the API from a browser. |

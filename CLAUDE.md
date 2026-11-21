@@ -72,7 +72,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 | `config.py` | `Settings` + `get_settings()`. Data lives in `data/checkpoints.db`, `data/memory.db` and `data/users.db`. |
 | `cli.py` | Admin commands: `list-users`, `reset-password`, `claim-profile` (`python -m app.cli`) |
 | `api/deps.py` | FastAPI `Depends` aliases: `SettingsDep`, `MemoryDep`, `LessonsDep`, `AccountsDep`, `UsersDep`, `SpeechDep` (503 when speech is disabled). Endpoints never build resources themselves. |
-| `api/security.py` | `CurrentSessionDep` / `CurrentUserDep` (session from the Bearer token; 401 otherwise), `daily_quota(kind)` (per-account and app-wide daily limits in `users.db`), the in-memory `RateLimiter` (`allow`, or `is_limited` + `record` for failed logins) and `rate_limited(group)` per IP: `tutor`, `transcribe`, `synthesize` |
+| `api/security.py` | `CurrentSessionDep` / `CurrentUserDep` (session from the Bearer token; 401 otherwise), `daily_quota(kind)` (per-account and app-wide daily limits in `users.db`), the in-memory `RateLimiter` (`allow`, or `is_limited` + `record` for failed logins) and `rate_limited(group)` per account: `tutor`, `transcribe`, `synthesize` |
 | `api/auth.py` | signup, login, logout, me, password change; `AuthLimiters` (signups per IP, failed logins per IP and per email) |
 | `api/{health,profiles,lessons,speech}.py` | Routers, all under the `/api` prefix: HTTP schemas and mapping domain errors to status codes. `lessons.py` turns the domain's turn events into SSE. |
 | `domain/ports.py` | Protocols the domain needs: `LearnerMemory`, `Tutor`, `Summarizer`, `Moderator`, `SpeechService`, `AccountStore`, `PasswordHasher`, `BreachChecker` |
@@ -94,7 +94,7 @@ Three layers, with dependencies pointing inward: `api` → `domain` ← `infra`.
 | `infra/moderation/classifier.py` | `LocalModerator` (Hugging Face classifier, loaded in the background at startup; fails open) |
 | `infra/persistence/` | `connections.py` (`open_persistence`: checkpointer + store), `learner_memory.py` (`LearnerMemoryStore`: profiles, lessons, progress), `users.py` (`UserStore`: aiosqlite on `data/users.db`, users / sessions / daily_usage, schema via `PRAGMA user_version`) |
 | `infra/security/passwords.py` | `Argon2Hasher` (Argon2id via pwdlib), `HibpBreachChecker` |
-| `infra/speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`), `service.py` (`DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro), `cuda.py` (CUDA 12 preload) |
+| `infra/speech/` | `stt.py` (`WhisperTranscriber`, local), `groq_stt.py` (`GroqTranscriber`, hosted), `tts.py` (`KokoroSynthesizer`), `service.py` (`DefaultSpeechService`: Groq or local STT with local fallback, plus Kokoro behind a single-thread FIFO queue), `cuda.py` (CUDA 12 preload) |
 
 ### Memory
 

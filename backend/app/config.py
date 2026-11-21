@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     # Optional regex for more allowed origins, e.g. Vercel preview deployments.
     cors_origin_regex: str | None = None
 
-    # Requests per minute per client IP to the endpoints that call the LLM or the speech
-    # models. 0 = unlimited.
+    # Requests per minute per account to each group of endpoints that call the LLM or the
+    # speech models. 0 = unlimited.
     rate_limit_per_minute: int = 30
 
     # Accounts. Sessions expire after this many idle days, and after the absolute maximum
